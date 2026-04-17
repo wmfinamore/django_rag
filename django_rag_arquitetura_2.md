@@ -107,7 +107,7 @@ django_rag/
 │
 ├── .env
 ├── .env.example
-├── docker-compose.yml
+├── docker-compose-infra.yml
 ├── pyproject.toml
 └── Makefile
 ```
@@ -205,7 +205,87 @@ CustomUser  (extends AbstractUser)
 
 ---
 
-## 03 · Pipeline RAG
+## 03 · Convenção de Comentários no Banco
+
+Todo model do projeto deve documentar a si mesmo e aos seus campos customizados diretamente no schema do PostgreSQL, usando os recursos do Django 4.2+ que materializam essas descrições como `COMMENT ON TABLE` e `COMMENT ON COLUMN` no banco. Isso permite que ferramentas externas (DBeaver, pgAdmin, dbt docs, geradores de ER) leiam a documentação sem precisar do código-fonte.
+
+### Regras
+
+1. **Todo model declara `Meta.db_table_comment`** descrevendo o propósito da tabela em uma ou duas frases.
+2. **Todo campo customizado (definido pelo projeto, não herdado) declara `db_comment`** descrevendo o significado do dado, unidade quando aplicável, e regras de NULL/vazio.
+3. **Campos herdados** (de `AbstractUser`, `TimeStampedModel`, etc.) não precisam de `db_comment` na subclasse — o comentário deve estar na superclasse.
+4. **`db_comment` ≠ `help_text`**: `help_text` é para o admin/forms, `db_comment` é para o DBA. Eles podem repetir conteúdo, mas têm públicos diferentes — o `db_comment` deve ser autoexplicativo sem contexto da UI.
+5. **Idioma**: comentários em português, alinhado com `verbose_name` e `help_text` do projeto.
+
+### Exemplo canônico (CustomUser)
+
+```python
+class CustomUser(AbstractUser):
+    sub = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+        db_comment=(
+            "Keycloak subject ID (claim 'sub' do JWT OIDC). Identificador "
+            "canônico do usuário quando autenticado via Keycloak. NULL para "
+            "contas locais criadas via admin (fallback ModelBackend)."
+        ),
+    )
+
+    avatar_url = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        db_comment="URL pública do avatar do usuário. Vazio quando não definido.",
+    )
+
+    class Meta:
+        db_table_comment = (
+            "Usuários da aplicação django_rag. Estende auth.AbstractUser "
+            "adicionando o 'sub' do Keycloak (OIDC) e avatar_url. "
+            "Registrado como AUTH_USER_MODEL desde a primeira migration."
+        )
+```
+
+### Aplicação por model
+
+Esta convenção se aplica a **todos** os models listados na seção 02:
+
+| Model | `db_table_comment` esperado | Campos com `db_comment` |
+|---|---|---|
+| `CustomUser` | Usuários do sistema (OIDC + local) | `sub`, `avatar_url` |
+| `KnowledgeCollection` | Coleções de conhecimento institucional, com ACL por grupo | `name`, `description`, `allowed_groups`, `is_active` |
+| `KnowledgeDocument` | Documentos institucionais ingeridos numa coleção | `collection`, `title`, `file_path`, `file_type`, `status`, `chunks_count`, `error_message`, `ingested_by` |
+| `KnowledgeChunk` | Chunks vetoriais (pgvector) de docs institucionais | `document`, `collection_id`, `chunk_index`, `content`, `embedding` |
+| `UserDocument` | Documentos pessoais do usuário | `owner`, `title`, `file`, `file_type`, `status`, `chunks_count` |
+| `UserChunk` | Chunks vetoriais (pgvector) de docs pessoais | `document`, `user_id`, `chunk_index`, `content`, `embedding` |
+| `Conversation` | Conversas de chat com escopo de coleções e docs pessoais | `user`, `title`, `collections`, `use_personal_docs` |
+| `Message` | Mensagens individuais de uma conversa | `conversation`, `role`, `content`, `sources` |
+
+### TimeStampedModel (campos herdados)
+
+O mixin `apps.core.models.TimeStampedModel` deve declarar `db_comment` em `created_at` e `updated_at` uma única vez — todos os models que herdarem dele recebem o comentário automaticamente, sem precisar redeclarar.
+
+### Verificação
+
+Após `makemigrations`, conferir os SQL gerados contém `COMMENT ON TABLE` e `COMMENT ON COLUMN`:
+
+```bash
+python manage.py sqlmigrate accounts 0001 | grep -i COMMENT
+```
+
+E no banco, após `migrate`:
+
+```sql
+SELECT obj_description('accounts_customuser'::regclass);
+SELECT col_description('accounts_customuser'::regclass, attnum)
+  FROM pg_attribute WHERE attrelid = 'accounts_customuser'::regclass AND attnum > 0;
+```
+
+---
+
+## 04 · Pipeline RAG
 
 Fluxo por query:
 
@@ -257,7 +337,7 @@ Message.save()                 persiste resposta + sources (JSON)
 
 ---
 
-## 04 · Autenticação OIDC + Fallback
+## 05 · Autenticação OIDC + Fallback
 
 ```
 browser
@@ -302,11 +382,12 @@ AUTHENTICATION_BACKENDS = [
 
 - Realm: `django-rag`
 - Client: `django` (confidential, redirect URI: `http://localhost:8000/oidc/callback/`)
+- Console admin: `http://localhost:8081`
 - Mapper: `Group Membership` → claim name `groups` → incluído no access token
 
 ---
 
-## 05 · Tasks Assíncronas (Celery + Redis)
+## 06 · Tasks Assíncronas (Celery + Redis)
 
 ### `index_document(doc_id, doc_type)`
 ```
@@ -337,7 +418,7 @@ AUTHENTICATION_BACKENDS = [
 
 ---
 
-## 06 · Avaliação do Pipeline RAG (Ragas)
+## 07 · Avaliação do Pipeline RAG (Ragas)
 
 O Ragas mede a qualidade do pipeline RAG de forma automática, sem depender de respostas humanas anotadas. Funciona localmente com Ollama como LLM avaliador.
 
@@ -416,82 +497,75 @@ python manage.py eval_rag --collection politicas-rh --samples 20
 
 ---
 
-## 07 · Infraestrutura de Deployment
+## 08 · Infraestrutura de Deployment
 
 ### Fase dev (atual)
 
 | Componente | Onde roda | Endereço |
 |---|---|---|
 | Django + Celery | Windows (uv run) | localhost:8000 |
-| Ollama | Windows (nativo) | 0.0.0.0:11434 |
-| PostgreSQL + pgvector | Rancher (container) | localhost:5432 |
-| Redis | Rancher (container) | localhost:6379 |
-| Keycloak | Rancher (container) | localhost:8080 |
+| Ollama | Windows (nativo) | localhost:11434 |
+| PostgreSQL + pgvector | Portainer (container) | localhost:15432 |
+| Redis | Portainer (container) | localhost:6380 |
+| Keycloak | Portainer (container) | localhost:8081 |
+| Redis Commander | Portainer (container) | localhost:8082 |
+
+> Em desenvolvimento, Django e Celery rodam direto no host — não são containerizados. O Ollama também roda nativamente no Windows. Os containers (PostgreSQL, Redis, Keycloak) expõem suas portas para o host, e o Django acessa tudo via `localhost`.
 
 ### Fase prod (futura)
 
 | Componente | Onde roda | Endereço |
 |---|---|---|
-| Django + Celery | Rancher (container) | — |
+| Django + Celery | Portainer (container) | — |
 | Ollama | Windows (nativo) | host-gateway:11434 |
-| PostgreSQL + pgvector | Rancher (container) | postgres:5432 |
-| Redis | Rancher (container) | redis:6379 |
-| Keycloak | Rancher (container) | keycloak:8080 |
+| PostgreSQL + pgvector | Portainer (container) | postgres:5432 |
+| Redis | Portainer (container) | redis:6379 |
+| Keycloak | Portainer (container) | keycloak:8080 |
 
-### docker-compose.yml — serviços
+> Em produção, quando Django entrar em container, o Ollama (ainda no host Windows) será acessado via `host-gateway`. Adicionar ao serviço Django: `extra_hosts: ["host-gateway:host-gateway"]` e `OLLAMA_BASE_URL=http://host-gateway:11434`.
+
+### docker-compose-infra.yml — serviços
+
+O arquivo `docker-compose-infra.yml` na raiz do projeto define apenas a infra de suporte (banco, cache, identity provider). Django, Celery e Ollama **não estão** no compose durante o desenvolvimento.
 
 ```yaml
 services:
 
-  postgres:
+  db:                               # PostgreSQL 16 + pgvector
     image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: django_rag
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
     ports: ["5432:5432"]
-    healthcheck: ...
 
-  redis:
+  redis:                            # Redis 7 — cache, Celery broker, channel layer
     image: redis:7-alpine
     ports: ["6379:6379"]
-    volumes:
-      - redis_data:/data
 
-  keycloak:
+  keycloak:                         # Keycloak 24 — OIDC Identity Provider
     image: quay.io/keycloak/keycloak:24.0
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: postgres
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
-    command: start-dev
     ports: ["8080:8080"]
-    depends_on: [postgres]
+    depends_on: [db]
 
-# fase prod — Django + Celery entram aqui
-# extra_hosts: ["host-gateway:host-gateway"]
-# OLLAMA_BASE_URL: http://host-gateway:11434
+  redis-commander:                  # UI web para inspecionar o Redis
+    image: rediscommander/redis-commander:latest
+    ports: ["8081:8081"]
 ```
 
-### Estimativa de RAM (Rancher · 4GB)
+O script `docker/postgres/init.sql` (montado no container do banco) cria o banco `keycloak` e habilita a extensão `vector` no banco `django_rag` automaticamente na primeira inicialização.
+
+### Estimativa de RAM (Portainer · 4GB)
 
 | Serviço | RAM estimada |
 |---|---|
 | PostgreSQL 16 | ~300 MB |
 | Redis 7 Alpine | ~30 MB |
 | Keycloak 24 | ~512 MB |
+| Redis Commander | ~50 MB |
 | Overhead SO/runtime | ~200 MB |
-| **Total containers** | **~1.04 GB** |
-| **Folga disponível** | **~3 GB** (para Django + Celery em prod) |
+| **Total containers** | **~1.09 GB** |
+| **Folga disponível** | **~2.9 GB** (para Django + Celery em prod) |
 
 ---
 
-## 08 · Dependências (pyproject.toml)
+## 09 · Dependências (pyproject.toml)
 
 ### Produção
 
@@ -537,7 +611,7 @@ dev = [
 
 ---
 
-## 09 · Variáveis de Ambiente (.env.example)
+## 10 · Variáveis de Ambiente (.env.example)
 
 ```bash
 # Django
@@ -550,12 +624,12 @@ DJANGO_SETTINGS_MODULE=config.settings.development
 POSTGRES_DB=django_rag
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/django_rag
+DATABASE_URL=postgresql://postgres:postgres@localhost:15432/django_rag
 
 # Redis / Celery
-REDIS_URL=redis://localhost:6379/0
-CELERY_BROKER_URL=redis://localhost:6379/0
-CELERY_RESULT_BACKEND=redis://localhost:6379/1
+REDIS_URL=redis://localhost:6380/0
+CELERY_BROKER_URL=redis://localhost:6380/0
+CELERY_RESULT_BACKEND=redis://localhost:6380/1
 
 # Ollama
 # dev: localhost | prod (container): http://host-gateway:11434
@@ -574,10 +648,10 @@ RAG_CHUNK_OVERLAP=50
 # Keycloak OIDC
 OIDC_RP_CLIENT_ID=django
 OIDC_RP_CLIENT_SECRET=troque-pelo-secret-do-keycloak
-OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8080/realms/django-rag/protocol/openid-connect/auth
-OIDC_OP_TOKEN_ENDPOINT=http://localhost:8080/realms/django-rag/protocol/openid-connect/token
-OIDC_OP_USER_ENDPOINT=http://localhost:8080/realms/django-rag/protocol/openid-connect/userinfo
-OIDC_OP_JWKS_ENDPOINT=http://localhost:8080/realms/django-rag/protocol/openid-connect/certs
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/auth
+OIDC_OP_TOKEN_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/token
+OIDC_OP_USER_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/userinfo
+OIDC_OP_JWKS_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/certs
 
 # Keycloak Admin (docker-compose)
 KEYCLOAK_ADMIN_PASSWORD=admin
@@ -585,7 +659,7 @@ KEYCLOAK_ADMIN_PASSWORD=admin
 
 ---
 
-## 10 · Parâmetros RAG
+## 11 · Parâmetros RAG
 
 | Parâmetro | Valor | Justificativa |
 |---|---|---|
@@ -603,7 +677,7 @@ KEYCLOAK_ADMIN_PASSWORD=admin
 
 ---
 
-## 11 · Atualização para Django 6.0.4
+## 12 · Atualização para Django 6.0.4
 
 ### Mudanças principais
 

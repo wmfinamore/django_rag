@@ -47,17 +47,17 @@ DJANGO_APPS = [
 ]
 
 THIRD_PARTY_APPS = [
-    "rest_framework",
-    "channels",
+    #"rest_framework",
+    #"channels",
     "mozilla_django_oidc",
 ]
 
 LOCAL_APPS = [
-    "apps.core",
+    #"apps.core",
     "apps.accounts",
-    "apps.knowledge",
-    "apps.documents",
-    "apps.chat",
+    #"apps.knowledge",
+    #"apps.documents",
+    #"apps.chat",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
