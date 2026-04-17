@@ -17,9 +17,18 @@ Including another URLconf
 from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
+from django.views.generic import RedirectView
+
+from apps.accounts import views as accounts_views
 
 base_urlpatterns = [
     path('admin/', admin.site.urls),
+    # OIDC — login, callback e logout via Keycloak
+    path('oidc/', include('mozilla_django_oidc.urls')),
+    # App accounts — perfil e outras rotas locais
+    path('accounts/', include('apps.accounts.urls', namespace='accounts')),
+    # Home
+    path('', accounts_views.home, name='home'),
 ]
 
 if settings.DEBUG:
@@ -30,5 +39,7 @@ if settings.DEBUG:
     ] + base_urlpatterns
 
 urlpatterns = [
+    # Redireciona a raiz "/" para "/rag/"
+    path('', RedirectView.as_view(url='/rag/', permanent=False)),
     path('rag/', include(base_urlpatterns)),
 ]

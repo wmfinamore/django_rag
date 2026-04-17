@@ -14,4 +14,5 @@ app_name = "accounts"
 
 urlpatterns = [
     path("profile/", views.profile, name="profile"),
+    path("logout/", views.keycloak_logout, name="logout"),
 ]

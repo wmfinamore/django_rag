@@ -74,8 +74,12 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    # Renova o token OIDC automaticamente antes de expirar
-    "mozilla_django_oidc.middleware.SessionRefresh",
+]
+
+# URLs que o SessionRefresh deve ignorar (callback e rotas do próprio OIDC)
+OIDC_EXEMPT_URLS = [
+    r"^rag/oidc/",
+    r"^oidc/",
 ]
 
 # ---------------------------------------------------------------------------
@@ -138,11 +142,30 @@ OIDC_OP_AUTHORIZATION_ENDPOINT = env("OIDC_OP_AUTHORIZATION_ENDPOINT")
 OIDC_OP_TOKEN_ENDPOINT = env("OIDC_OP_TOKEN_ENDPOINT")
 OIDC_OP_USER_ENDPOINT = env("OIDC_OP_USER_ENDPOINT")
 OIDC_OP_JWKS_ENDPOINT = env("OIDC_OP_JWKS_ENDPOINT")
+# Endpoint de logout do Keycloak (end_session_endpoint do OIDC Discovery)
+OIDC_OP_LOGOUT_ENDPOINT = env(
+    "OIDC_OP_LOGOUT_ENDPOINT",
+    default="",  # preenchido automaticamente pelo mozilla-django-oidc via JWKS discovery
+)
 OIDC_RP_SIGN_ALGO = "RS256"
+# Persiste o id_token na sessão para que o logout federado possa enviar
+# o id_token_hint ao end_session_endpoint do Keycloak.
+OIDC_STORE_ID_TOKEN = True
+
+# Tempo de vida do token OIDC em cache (segundos). O SessionRefresh middleware
+# verifica expiração a cada request; renovação ocorre quando restarem menos de
+# OIDC_RENEW_ID_TOKEN_EXPIRY_SECONDS segundos de validade.
+OIDC_RENEW_ID_TOKEN_EXPIRY_SECONDS = env.int(
+    "OIDC_RENEW_ID_TOKEN_EXPIRY_SECONDS", default=60
+)
 
 # Redireciona para home após login/logout via OIDC
-LOGIN_REDIRECT_URL = "/"
-LOGOUT_REDIRECT_URL = "/"
+# A URL base do projeto é /rag/, portanto apontamos para lá.
+LOGIN_REDIRECT_URL = "/rag/"
+LOGOUT_REDIRECT_URL = "/rag/"
+
+# URL de login usada pelo decorator @login_required
+LOGIN_URL = "/rag/oidc/authenticate/"
 
 # ---------------------------------------------------------------------------
 # Cache — Redis

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %}Início — Django RAG{% endblock %}
+
+{% block extra_css %}
+<style>
+  .hero {
+    text-align: center;
+    padding: 4rem 1rem;
+  }
+  .hero h1 {
+    font-size: 2.2rem;
+    margin-bottom: .75rem;
+    color: #1a1a2e;
+  }
+  .hero p {
+    font-size: 1.1rem;
+    color: #555;
+    max-width: 520px;
+    margin: 0 auto 2rem;
+    line-height: 1.6;
+  }
+  .hero .btn-hero {
+    display: inline-block;
+    padding: .75rem 2rem;
+    background: #e94560;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background .2s;
+  }
+  .hero .btn-hero:hover { background: #c73652; }
+
+  .user-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.5rem 2rem;
+    max-width: 480px;
+    margin: 3rem auto 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  }
+  .user-card h2 { font-size: 1.2rem; margin-bottom: 1rem; color: #1a1a2e; }
+  .user-card .field { font-size: .9rem; margin-bottom: .4rem; color: #444; }
+  .user-card .field strong { color: #222; }
+  .user-card .actions { margin-top: 1.2rem; }
+  .user-card .actions a {
+    display: inline-block;
+    padding: .45rem 1.1rem;
+    background: #1a1a2e;
+    color: #fff;
+    border-radius: 6px;
+    font-size: .85rem;
+    text-decoration: none;
+  }
+  .user-card .actions a:hover { opacity: .85; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if request.user.is_authenticated %}
+  <div class="user-card">
+    <h2>👋 Olá, {{ request.user.get_full_name|default:request.user.username }}!</h2>
+    <p class="field"><strong>E-mail:</strong> {{ request.user.email|default:"—" }}</p>
+    <p class="field"><strong>Usuário:</strong> {{ request.user.username }}</p>
+    {% if request.user.sub %}
+      <p class="field"><strong>Keycloak sub:</strong> <code>{{ request.user.sub }}</code></p>
+    {% endif %}
+    <div class="actions">
+      <a href="{% url 'accounts:profile' %}">Ver perfil completo</a>
+    </div>
+  </div>
+{% else %}
+  <div class="hero">
+    <h1>Chat com LLM + RAG</h1>
+    <p>
+      Acesse sua base de conhecimento institucional e documentos pessoais
+      através de linguagem natural, com recuperação semântica e geração
+      aumentada por contexto.
+    </p>
+    <a class="btn-hero" href="{% url 'oidc_authentication_init' %}">
+      Entrar com Keycloak
+    </a>
+  </div>
+{% endif %}
+{% endblock %}

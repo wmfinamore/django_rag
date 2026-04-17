@@ -48,7 +48,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Keycloak 24 — Identity Provider (OIDC)
-  # Realm e client configurados manualmente via console: http://localhost:8080
+  # Realm e client configurados manualmente via console: http://localhost:8081
   # Usuário admin / senha definida em KEYCLOAK_ADMIN_PASSWORD
   # ---------------------------------------------------------------------------
   keycloak:
@@ -74,7 +74,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8081/realms/master || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -102,8 +102,4 @@ volumes:
   redis_data:
     driver: local
   postgres_init:
-    driver: local
-
-networks:
-  default:
-    name: django_rag_network
+    driver: loca

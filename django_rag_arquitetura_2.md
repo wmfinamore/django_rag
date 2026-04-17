@@ -339,51 +339,109 @@ Message.save()                 persiste resposta + sources (JSON)
 
 ## 05 · Autenticação OIDC + Fallback
 
+### Fluxo de login
+
 ```
 browser
-  │  GET /login/
+  │  GET /rag/oidc/authenticate/
   ▼
-Django  →  redirect para Keycloak :8080
+Django  →  redirect para Keycloak :8081
               │
               │  usuário faz login
               ▼
            Keycloak emite auth code
               │
-              ▼  /oidc/callback/
-Django troca code por JWT
+              ▼  GET /rag/oidc/callback/
+Django troca code por JWT (id_token + access_token)
               │
               ▼
         GroupSyncOIDCBackend          (accounts/oidc_backend.py)
-        ├── lê claim "groups" do JWT
-        ├── Group.objects.get_or_create() para cada grupo
-        ├── user.groups.set(grupos_do_token)
-        └── CustomUser.objects.get_or_create(sub=payload["sub"])
+        ├── filter_users_by_claims()  → busca por sub (não por e-mail)
+        ├── create_user() / update_user()
+        │     ├── persiste username, email, first_name, last_name, sub
+        │     └── chama _sync_groups()
+        └── _sync_groups()
+              ├── lê claim "groups" do JWT (prefixo "/" removido)
+              ├── Group.objects.get_or_create() para cada grupo
+              ├── user.groups.set(grupos_do_token)
+              ├── is_staff = True se grupo ∈ STAFF_GROUPS {"admin"}
+              └── is_superuser = True se grupo ∈ SUPERUSER_GROUPS {}
               │
               ▼
-        sessão Django criada (cookie)
+        id_token salvo na sessão (OIDC_STORE_ID_TOKEN = True)
+              │
+              ▼
+        sessão Django criada → redirect para /rag/
 ```
 
-**Fallback local:**
+### Fluxo de logout
 
 ```
-/admin/login/  →  ModelBackend  →  somente is_staff=True
+browser
+  │  GET /rag/accounts/logout/
+  ▼
+keycloak_logout view              (accounts/views.py)
+  ├── lê id_token da sessão
+  ├── destroi sessão Django (django_logout)
+  └── redirect para Keycloak end_session_endpoint
+        ?id_token_hint=<token>
+        &post_logout_redirect_uri=http://localhost:8000/rag/
+              │
+              ▼
+        Keycloak invalida sessão SSO
+              │
+              ▼
+        redirect de volta para /rag/
 ```
 
-**settings/base.py:**
+### Sincronização de permissões por grupo
+
+| Grupo Keycloak | `is_staff` | `is_superuser` |
+|---|---|---|
+| `admin` | ✅ True | ❌ False |
+| `editor` | ❌ False | ❌ False |
+| `viewer` | ❌ False | ❌ False |
+
+Para alterar os grupos que concedem staff/superuser, edite as constantes em `apps/accounts/oidc_backend.py`:
 
 ```python
-AUTHENTICATION_BACKENDS = [
-    "accounts.oidc_backend.GroupSyncOIDCBackend",
-    "django.contrib.auth.backends.ModelBackend",
-]
+class GroupSyncOIDCBackend(OIDCAuthenticationBackend):
+    STAFF_GROUPS: frozenset[str] = frozenset({"admin"})
+    SUPERUSER_GROUPS: frozenset[str] = frozenset()
 ```
 
-**Keycloak — configurações necessárias:**
+A sincronização ocorre em **todo login** — se o usuário for removido do grupo `admin` no Keycloak, `is_staff` volta a `False` no próximo login.
+
+### Fallback local
+
+```
+/rag/admin/login/  →  ModelBackend  →  usuários criados manualmente com is_staff=True
+```
+
+### Settings relevantes
+
+```python
+# settings/base.py
+AUTHENTICATION_BACKENDS = [
+    "apps.accounts.oidc_backend.GroupSyncOIDCBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+
+OIDC_RP_SIGN_ALGO = "RS256"
+OIDC_STORE_ID_TOKEN = True          # necessário para logout federado
+LOGIN_URL = "/rag/oidc/authenticate/"
+LOGIN_REDIRECT_URL = "/rag/"
+LOGOUT_REDIRECT_URL = "/rag/"
+```
+
+### Keycloak — configurações necessárias
 
 - Realm: `django-rag`
-- Client: `django` (confidential, redirect URI: `http://localhost:8000/oidc/callback/`)
+- Client: `django_cli` (confidential, PKCE **desabilitado**)
+- Redirect URIs: `http://localhost:8000/rag/oidc/callback/`, `http://127.0.0.1:8000/rag/oidc/callback/`
 - Console admin: `http://localhost:8081`
-- Mapper: `Group Membership` → claim name `groups` → incluído no access token
+- Mappers: `groups` (Group Membership), `given_name`, `family_name`
+- Script de setup automático: `python docker/keycloak_setup.py`
 
 ---
 
@@ -646,12 +704,15 @@ RAG_CHUNK_SIZE=500
 RAG_CHUNK_OVERLAP=50
 
 # Keycloak OIDC
-OIDC_RP_CLIENT_ID=django
+# Client ID e secret gerados pelo keycloak_setup.py
+OIDC_RP_CLIENT_ID=django_cli
 OIDC_RP_CLIENT_SECRET=troque-pelo-secret-do-keycloak
 OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/auth
 OIDC_OP_TOKEN_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/token
 OIDC_OP_USER_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/userinfo
 OIDC_OP_JWKS_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/certs
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/logout
+OIDC_RENEW_ID_TOKEN_EXPIRY_SECONDS=60
 
 # Keycloak Admin (docker-compose)
 KEYCLOAK_ADMIN_PASSWORD=admin
@@ -681,17 +742,21 @@ KEYCLOAK_ADMIN_PASSWORD=admin
 
 ### Prefixo global `/rag/`
 
-Todas as URLs do projeto são servidas sob o prefixo `/rag/`. O arquivo `config/urls.py` agrupa as rotas internas em `base_urlpatterns` e as envolve com `path('rag/', include(...))`:
+Todas as URLs do projeto são servidas sob o prefixo `/rag/`. A raiz `/` redireciona permanentemente para `/rag/`. O arquivo `config/urls.py` agrupa as rotas internas em `base_urlpatterns` e as envolve com `path('rag/', include(...))`:
 
 ```python
 # config/urls.py
 from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
+from django.views.generic import RedirectView
+from apps.accounts import views as accounts_views
 
 base_urlpatterns = [
     path('admin/', admin.site.urls),
-    # demais apps registrados aqui
+    path('oidc/', include('mozilla_django_oidc.urls')),   # login, callback
+    path('accounts/', include('apps.accounts.urls', namespace='accounts')),
+    path('', accounts_views.home, name='home'),
 ]
 
 if settings.DEBUG:
@@ -701,6 +766,7 @@ if settings.DEBUG:
     ] + base_urlpatterns
 
 urlpatterns = [
+    path('', RedirectView.as_view(url='/rag/', permanent=False)),
     path('rag/', include(base_urlpatterns)),
 ]
 ```
@@ -709,23 +775,26 @@ urlpatterns = [
 
 | Recurso | URL |
 |---|---|
+| Home | `http://localhost:8000/rag/` |
+| Login (inicia fluxo OIDC) | `http://localhost:8000/rag/oidc/authenticate/` |
+| Callback OIDC | `http://localhost:8000/rag/oidc/callback/` |
+| Logout federado | `http://localhost:8000/rag/accounts/logout/` |
+| Perfil do usuário | `http://localhost:8000/rag/accounts/profile/` |
 | Django Admin | `http://localhost:8000/rag/admin/` |
-| OIDC callback | `http://localhost:8000/rag/oidc/callback/` |
-| API accounts | `http://localhost:8000/rag/accounts/` |
-| API knowledge | `http://localhost:8000/rag/knowledge/` |
-| API documents | `http://localhost:8000/rag/documents/` |
-| API chat | `http://localhost:8000/rag/chat/` |
 | Debug Toolbar *(dev)* | `http://localhost:8000/rag/__debug__/` |
 
-> A porta padrão em desenvolvimento é `8000`. Ao rodar via Docker ou proxy reverso (ex.: Nginx) a porta pode mudar (ex.: `8080`), mas o prefixo `/rag/` permanece fixo.
+> A porta padrão em desenvolvimento é `8000`. Ao rodar via proxy reverso (ex.: Nginx) a porta pode mudar, mas o prefixo `/rag/` permanece fixo.
 
-### Configuração OIDC — redirect URI
+### Configuração OIDC — redirect URIs
 
-O prefixo deve ser refletido no Keycloak. O redirect URI do client `django` deve apontar para:
+O client `django_cli` no Keycloak deve ter as seguintes redirect URIs cadastradas (o script `keycloak_setup.py` já configura isso automaticamente):
 
 ```
 http://localhost:8000/rag/oidc/callback/
+http://127.0.0.1:8000/rag/oidc/callback/
 ```
+
+> `localhost` e `127.0.0.1` são tratados como URIs distintas pelo Keycloak — ambas precisam estar cadastradas.
 
 ### Debug Toolbar
 

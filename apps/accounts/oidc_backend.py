@@ -25,13 +25,11 @@ class GroupSyncOIDCBackend(OIDCAuthenticationBackend):
     Backend OIDC que:
       - Identifica o usuário pelo claim ``sub`` (Keycloak subject ID).
       - Sincroniza os grupos do Django a partir do claim ``groups`` do token.
+      - Promove is_staff para usuários nos grupos definidos em STAFF_GROUPS.
+      - Promove is_superuser para usuários nos grupos definidos em SUPERUSER_GROUPS.
 
-    TODO (quando mozilla-django-oidc estiver instalado e Keycloak configurado):
-      - Validar mapeamento do claim "groups" no realm django-rag.
-      - Implementar tratamento de grupos hierárquicos (Keycloak pode devolver
-        com prefixo "/"), fazendo strip do prefixo antes do get_or_create.
-      - Decidir política para grupos que não existem no Keycloak mas existem
-        no Django (remover do usuário vs. preservar).
+    Para alterar quais grupos concedem staff/superuser, sobrescreva as
+    constantes de classe ou edite-as diretamente aqui.
     """
 
     # ------------------------------------------------------------------ #
@@ -77,22 +75,38 @@ class GroupSyncOIDCBackend(OIDCAuthenticationBackend):
     # Sync de grupos                                                     #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _sync_groups(user, claims: dict[str, Any]) -> None:
+    # Grupos do Keycloak que concedem is_staff=True no Django.
+    STAFF_GROUPS: frozenset[str] = frozenset({"admin"})
+    # Grupos do Keycloak que concedem is_superuser=True no Django.
+    SUPERUSER_GROUPS: frozenset[str] = frozenset()
+
+    def _sync_groups(self, user, claims: dict[str, Any]) -> None:
         """
-        Espelha no Django a lista de grupos vinda no claim ``groups``.
+        Espelha no Django a lista de grupos vinda no claim ``groups`` e
+        ajusta is_staff / is_superuser conforme a pertença a grupos especiais.
 
         - Grupos novos são criados via get_or_create.
         - ``user.groups.set(...)`` substitui toda a lista — grupos locais que
           não estejam no token são removidos do usuário.
+        - is_staff  = True se o usuário pertence a qualquer grupo em STAFF_GROUPS.
+        - is_superuser = True se pertence a qualquer grupo em SUPERUSER_GROUPS.
         """
         raw_groups = claims.get("groups") or []
         group_objs = []
+        cleaned_names: set[str] = set()
+
         for name in raw_groups:
             # Keycloak pode retornar grupos com prefixo "/" (hierarquia).
             cleaned = name.lstrip("/").strip()
             if not cleaned:
                 continue
+            cleaned_names.add(cleaned)
             group, _created = Group.objects.get_or_create(name=cleaned)
             group_objs.append(group)
+
         user.groups.set(group_objs)
+
+        # Sincroniza flags de permissão com base nos grupos recebidos.
+        user.is_staff = bool(cleaned_names & self.STAFF_GROUPS)
+        user.is_superuser = bool(cleaned_names & self.SUPERUSER_GROUPS)
+        user.save(update_fields=["is_staff", "is_superuser"])
