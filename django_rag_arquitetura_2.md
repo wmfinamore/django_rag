@@ -677,7 +677,129 @@ KEYCLOAK_ADMIN_PASSWORD=admin
 
 ---
 
-## 12 · Atualização para Django 6.0.4
+## 12 · Roteamento de URLs
+
+### Prefixo global `/rag/`
+
+Todas as URLs do projeto são servidas sob o prefixo `/rag/`. O arquivo `config/urls.py` agrupa as rotas internas em `base_urlpatterns` e as envolve com `path('rag/', include(...))`:
+
+```python
+# config/urls.py
+from django.conf import settings
+from django.contrib import admin
+from django.urls import include, path
+
+base_urlpatterns = [
+    path('admin/', admin.site.urls),
+    # demais apps registrados aqui
+]
+
+if settings.DEBUG:
+    import debug_toolbar
+    base_urlpatterns = [
+        path('__debug__/', include(debug_toolbar.urls)),
+    ] + base_urlpatterns
+
+urlpatterns = [
+    path('rag/', include(base_urlpatterns)),
+]
+```
+
+### Tabela de endereços
+
+| Recurso | URL |
+|---|---|
+| Django Admin | `http://localhost:8000/rag/admin/` |
+| OIDC callback | `http://localhost:8000/rag/oidc/callback/` |
+| API accounts | `http://localhost:8000/rag/accounts/` |
+| API knowledge | `http://localhost:8000/rag/knowledge/` |
+| API documents | `http://localhost:8000/rag/documents/` |
+| API chat | `http://localhost:8000/rag/chat/` |
+| Debug Toolbar *(dev)* | `http://localhost:8000/rag/__debug__/` |
+
+> A porta padrão em desenvolvimento é `8000`. Ao rodar via Docker ou proxy reverso (ex.: Nginx) a porta pode mudar (ex.: `8080`), mas o prefixo `/rag/` permanece fixo.
+
+### Configuração OIDC — redirect URI
+
+O prefixo deve ser refletido no Keycloak. O redirect URI do client `django` deve apontar para:
+
+```
+http://localhost:8000/rag/oidc/callback/
+```
+
+### Debug Toolbar
+
+O middleware `DebugToolbarMiddleware` e a rota `__debug__/` são registrados **apenas quando `DEBUG=True`** (ambiente de desenvolvimento). Em produção o bloco `if settings.DEBUG` não é executado e a toolbar não fica exposta.
+
+---
+
+## 13 · Convenção de Commits
+
+O projeto adota o padrão **Conventional Commits** com mensagens inteiramente em **português do Brasil**.
+
+### Formato
+
+```
+<tipo>(<escopo>): <descrição curta no imperativo>
+
+[corpo opcional — explica o "porquê", não o "o quê"]
+
+[rodapé opcional — breaking changes, closes #issue]
+```
+
+- **Tipo e escopo** sempre em minúsculas.
+- **Descrição** em letras minúsculas, sem ponto final, no imperativo presente ("adicionar", "corrigir", "remover").
+- **Limite de 72 caracteres** na linha de assunto.
+- Corpo e rodapé separados da linha de assunto por uma linha em branco.
+
+### Tipos permitidos
+
+| Tipo | Quando usar |
+|---|---|
+| `feat` | Nova funcionalidade para o usuário |
+| `fix` | Correção de bug |
+| `refactor` | Refatoração sem mudança de comportamento |
+| `chore` | Tarefas de manutenção, configuração, dependências |
+| `docs` | Alterações exclusivamente em documentação |
+| `test` | Adição ou correção de testes |
+| `perf` | Melhoria de performance |
+| `style` | Formatação, espaços, ponto-e-vírgula (sem lógica) |
+| `ci` | Configuração de pipelines e automações |
+| `revert` | Reversão de commit anterior |
+
+### Escopos sugeridos
+
+Correspondem aos apps e módulos do projeto:
+
+`accounts` · `knowledge` · `documents` · `chat` · `core` · `settings` · `urls` · `celery` · `oidc` · `rag` · `docker` · `deps`
+
+### Exemplos
+
+```
+feat(chat): implementar streaming de tokens via WebSocket
+
+fix(accounts): corrigir sincronização de grupos no callback OIDC
+
+refactor(core): extrair lógica de reranking para classe dedicada
+
+chore(deps): atualizar django para 6.0.4
+
+docs(arquitetura): adicionar seção de roteamento de URLs
+
+test(knowledge): adicionar testes de integração para ingestão de PDF
+
+feat(urls): adicionar prefixo /rag/ em todas as rotas do projeto
+
+BREAKING CHANGE: todas as URLs agora exigem o prefixo /rag/
+```
+
+### Breaking changes
+
+Quando um commit introduz incompatibilidade, inclua `BREAKING CHANGE:` no rodapé com descrição do impacto e, se possível, instruções de migração.
+
+---
+
+## 14 · Atualização para Django 6.0.4  <!-- era seção 12 -->
 
 ### Mudanças principais
 
