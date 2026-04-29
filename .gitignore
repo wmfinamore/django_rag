@@ -201,3 +201,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+static/css/bootstrap*
+static/js/bootstrap*
