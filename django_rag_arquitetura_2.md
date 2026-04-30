@@ -1,6 +1,6 @@
 # Django RAG — Arquitetura do Projeto
 
-> Proposta técnica completa · versão para avaliação
+> Documentação técnica atualizada · baseada no código-fonte
 
 ---
 
@@ -8,19 +8,19 @@
 
 | Camada | Tecnologia |
 |---|---|
-| Web / API | Django 4.2 + Django REST Framework |
-| WebSocket | Django Channels + channels-redis |
-| Task queue | Celery + Redis 7 |
+| Web / API | Django 6.0 + Django REST Framework 3.15 |
+| WebSocket | Django Channels 4.1 + channels-redis + Daphne 4.1 |
+| Task queue | Celery 5.3+ [redis] |
 | Autenticação | Keycloak 24 (OIDC) + fallback ModelBackend |
 | Banco de dados | PostgreSQL 16 + pgvector |
 | LLM | Ollama (llama3.2:3b · CPU) |
-| Embeddings | sentence-transformers · all-MiniLM-L6-v2 · CPU |
+| Embeddings | sentence-transformers · all-MiniLM-L6-v2 · CPU (384 dims) |
 | Chunking | LangChain SemanticChunker (semantic split) |
-| Reranking | sentence-transformers · ms-marco-MiniLM-L-6-v2 · CPU |
+| Reranking | sentence-transformers · cross-encoder/ms-marco-MiniLM-L-6-v2 · CPU |
 | Filtro de privacidade | presidio-analyzer + presidio-anonymizer (PII / LGPD) |
 | Avaliação RAG | Ragas + datasets |
-| Gerenciador de deps | uv + pyproject.toml |
-| Testes | pytest + pytest-django |
+| Gerenciador de deps | uv + pyproject.toml (Python ≥ 3.12, < 3.14) |
+| Testes | pytest + pytest-django + pytest-asyncio |
 
 ---
 
@@ -29,19 +29,19 @@
 ```
 django_rag/
 │
-├── config/                        # settings app (não é um app Django comum)
+├── config/                        # configuração do projeto Django
 │   ├── settings/
-│   │   ├── base.py
-│   │   ├── development.py
+│   │   ├── base.py                # settings compartilhados (todos os ambientes)
+│   │   ├── development.py         # + debug_toolbar, logging verbose
 │   │   └── production.py
-│   ├── urls.py
+│   ├── urls.py                    # todas as rotas prefixadas em /rag/
 │   ├── asgi.py
 │   ├── wsgi.py
 │   └── celery.py
 │
 ├── apps/                          # todos os apps do projeto
 │   │
-│   ├── core/                      # artefatos comuns
+│   ├── core/                      # artefatos comuns (habilitado)
 │   │   ├── models.py              # TimeStampedModel (abstrato)
 │   │   ├── rag_service.py         # núcleo RAG: embeddings, retrieval, reranking, stream
 │   │   ├── reranker.py            # CrossEncoder reranker (ms-marco-MiniLM)
@@ -50,17 +50,17 @@ django_rag/
 │   │   ├── tasks.py               # tasks Celery compartilhadas
 │   │   ├── utils.py
 │   │   ├── mixins.py
-│   │   └── exceptions.py
+│   │   └── exceptions.py          # EmbeddingError, LLMError, RAGError
 │   │
-│   ├── accounts/                  # autenticação + usuário customizado
+│   ├── accounts/                  # autenticação + usuário customizado (habilitado)
 │   │   ├── models.py              # CustomUser (extends AbstractUser)
 │   │   ├── oidc_backend.py        # GroupSyncOIDCBackend
 │   │   ├── admin.py
 │   │   ├── forms.py
-│   │   ├── views.py
+│   │   ├── views.py               # home, profile
 │   │   └── urls.py
 │   │
-│   ├── knowledge/                 # base de conhecimento institucional
+│   ├── knowledge/                 # base de conhecimento institucional (não habilitado ainda)
 │   │   ├── models.py              # KnowledgeCollection, KnowledgeDocument, KnowledgeChunk
 │   │   ├── admin.py
 │   │   ├── serializers.py
@@ -71,14 +71,14 @@ django_rag/
 │   │           ├── ingest_knowledge.py   # CLI de ingestão em lote
 │   │           └── eval_rag.py           # CLI de avaliação com Ragas
 │   │
-│   ├── documents/                 # documentos pessoais do usuário
+│   ├── documents/                 # documentos pessoais do usuário (não habilitado ainda)
 │   │   ├── models.py              # UserDocument, UserChunk
 │   │   ├── serializers.py
 │   │   ├── views.py               # upload / delete (DRF)
 │   │   ├── urls.py
 │   │   └── tasks.py               # index / delete / reindex
 │   │
-│   └── chat/                      # conversas e streaming
+│   └── chat/                      # conversas e streaming (não habilitado ainda)
 │       ├── models.py              # Conversation, Message
 │       ├── consumers.py           # ChatConsumer (WebSocket)
 │       ├── routing.py
@@ -86,34 +86,36 @@ django_rag/
 │       ├── views.py
 │       └── urls.py
 │
+├── docker/
+│   ├── keycloak_setup.py          # script de setup automático do Keycloak via Admin API
+│   ├── fix_pkce.py
+│   ├── fix_redirect_uris.py
+│   ├── download_bootstrap.py
+│   └── postgres/
+│       └── init.sql
+│
 ├── templates/
 │   ├── base.html
 │   ├── accounts/
+│   │   └── profile.html
+│   ├── home.html
 │   ├── chat/
 │   ├── documents/
 │   └── knowledge/
 │
 ├── static/
-│   ├── css/
-│   ├── js/
-│   └── img/
-│
-├── tests/
-│   ├── conftest.py
-│   ├── accounts/
-│   ├── core/
-│   ├── knowledge/
-│   ├── documents/
-│   └── chat/
+│   ├── css/   (bootstrap.min.css)
+│   └── js/    (bootstrap.bundle.min.js)
 │
 ├── .env
 ├── .env.example
-├── docker-compose.yml
+├── docker-compose-infra.yml       # serviços de infra (db, redis, keycloak, redis-commander)
 ├── pyproject.toml
-└── Makefile
+└── manage.py
 ```
 
-> Cada app contém: `__init__.py`, `apps.py`, `models.py`, `migrations/`, `admin.py`, `tests/`
+> Apps habilitados atualmente em `INSTALLED_APPS`: `apps.core`, `apps.accounts`.
+> Apps `knowledge`, `documents` e `chat` estão implementados mas comentados — serão habilitados progressivamente.
 
 ---
 
@@ -208,39 +210,42 @@ CustomUser  (extends AbstractUser)
 
 ## 03 · Pipeline RAG
 
-Fluxo por query:
+Fluxo por query (implementado em `apps/core/rag_service.py`):
 
 ```
 browser / WebSocket
     │
     ▼
-sentence-transformers          gera embedding da query (CPU · ~50ms)
+RAGService.stream(query)
     │
     ▼
-pgvector — KnowledgeChunk      busca top-k × RAG_RERANK_FACTOR por similaridade
-    filtro: collection_id IN (coleções do usuário via groups)
+get_embedding(query)               sentence-transformers (CPU · ~50ms)
+    │                              singleton por processo via @lru_cache
+    ▼
+RAGService._retrieve_candidates()
     │
-    + (se use_personal_docs=True)
+    ├── (se collection_ids não vazio)
+    │   pgvector — KnowledgeChunk  busca top_k × rerank_factor por L2 distance
+    │   filtro: collection_id IN collection_ids
     │
-pgvector — UserChunk           busca top-k × RAG_RERANK_FACTOR por similaridade
-    filtro: user_id = request.user.id
+    └── (se use_personal_docs=True)
+        pgvector — UserChunk       busca top_k × rerank_factor por L2 distance
+        filtro: user_id = user.pk
     │
     ▼
-CrossEncoder reranker          reordena todos os chunks candidatos
-    modelo: ms-marco-MiniLM-L-6-v2 (CPU · ~30ms)
-    seleciona os RAG_TOP_K mais relevantes após reranking
+rerank(query, chunks, top_k)       CrossEncoder ms-marco-MiniLM-L-6-v2 (CPU · ~30ms)
+    │                              (apps/core/reranker.py)
+    ▼
+RAGService.build_context()         mescla chunks rerankeados + query → prompt
     │
     ▼
-rag_service.build_prompt()     mescla chunks rerankeados + query → prompt
+OllamaLLM.stream(full_prompt)     geração com streaming token a token
     │
     ▼
-Ollama — llama3.2:3b           geração com streaming (CPU · ~2-5 tok/s)
+ChatConsumer                       yield tokens via WebSocket
     │
     ▼
-ChatConsumer                   yield tokens via WebSocket
-    │
-    ▼
-Message.save()                 persiste resposta + sources (JSON)
+Message.save()                     persiste resposta + sources (JSON)
 ```
 
 **Parâmetros RAG relevantes (settings):**
@@ -250,60 +255,79 @@ Message.save()                 persiste resposta + sources (JSON)
 | `RAG_CHUNK_SIZE` | 500 | tamanho máximo do chunk em tokens (fallback) |
 | `RAG_CHUNK_OVERLAP` | 50 | sobreposição no chunking de fallback |
 | `RAG_TOP_K` | 4 | chunks finais enviados ao prompt (pós-reranking) |
-| `RAG_RERANK_FACTOR` | 3 | multiplicador de candidatos pré-reranking (busca top-k × 3 = 12) |
+| `RAG_RERANK_FACTOR` | 3 | multiplicador de candidatos pré-reranking (busca top_k × 3 = 12) |
 | `RAG_SEMANTIC_BREAKPOINT` | `percentile` | estratégia do SemanticChunker (`percentile` · `std_deviation` · `interquartile`) |
 | `RAG_RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | modelo CrossEncoder para reranking |
 | `OLLAMA_NUM_CTX` | 2048 | janela de contexto (CPU) |
 | `OLLAMA_NUM_THREAD` | 4 | threads (i7-7500U) |
+| `OLLAMA_TEMPERATURE` | 0.3 | temperatura do LLM (respostas mais determinísticas) |
 
 ---
 
 ## 04 · Autenticação OIDC + Fallback
 
+Implementado em `apps/accounts/oidc_backend.py` — `GroupSyncOIDCBackend`.
+
 ```
 browser
-  │  GET /login/
+  │  GET /rag/oidc/authenticate/
   ▼
-Django  →  redirect para Keycloak :8080
+Django  →  redirect para Keycloak :8081
               │
               │  usuário faz login
               ▼
            Keycloak emite auth code
               │
-              ▼  /oidc/callback/
+              ▼  /rag/oidc/callback/
 Django troca code por JWT
               │
               ▼
         GroupSyncOIDCBackend          (accounts/oidc_backend.py)
-        ├── lê claim "groups" do JWT
-        ├── Group.objects.get_or_create() para cada grupo
-        ├── user.groups.set(grupos_do_token)
-        └── CustomUser.objects.get_or_create(sub=payload["sub"])
+        ├── filter_users_by_claims()  →  busca por sub (não por email)
+        ├── create_user() / update_user()
+        └── _sync_groups()
+            ├── lê claim "groups" do JWT (prefixo "/" removido)
+            ├── Group.objects.get_or_create() para cada grupo
+            ├── user.groups.set(grupos_do_token)
+            ├── is_staff = True se in STAFF_GROUPS {"admin"}
+            └── is_superuser = True se in SUPERUSER_GROUPS (vazio por padrão)
               │
               ▼
-        sessão Django criada (cookie)
+        sessão Django criada (cookie · backend: Redis)
 ```
 
 **Fallback local:**
 
 ```
-/admin/login/  →  ModelBackend  →  somente is_staff=True
+/rag/admin/login/  →  ModelBackend  →  somente is_staff=True
 ```
 
 **settings/base.py:**
 
 ```python
 AUTHENTICATION_BACKENDS = [
-    "accounts.oidc_backend.GroupSyncOIDCBackend",
+    "apps.accounts.oidc_backend.GroupSyncOIDCBackend",
     "django.contrib.auth.backends.ModelBackend",
 ]
+
+LOGIN_REDIRECT_URL  = "/rag/"
+LOGOUT_REDIRECT_URL = "/rag/"
+LOGIN_URL           = "/rag/oidc/authenticate/"
 ```
 
-**Keycloak — configurações necessárias:**
+**Keycloak — configuração de desenvolvimento:**
 
-- Realm: `django-rag`
-- Client: `django` (confidential, redirect URI: `http://localhost:8000/oidc/callback/`)
-- Mapper: `Group Membership` → claim name `groups` → incluído no access token
+| Item | Valor |
+|---|---|
+| Realm | `django-rag` |
+| Client ID | `django_cli` |
+| Client tipo | confidential, Authorization Code (sem PKCE) |
+| Redirect URI | `http://localhost:8000/rag/oidc/callback/` |
+| Grupos criados | `admin`, `editor`, `viewer` |
+| Mapper | `groups` claim → incluso em id_token, access_token e userinfo |
+| Usuário de teste | `testuser` / `Test@1234` (grupos: admin, viewer) |
+
+> O script `docker/keycloak_setup.py` automatiza toda essa configuração via Admin REST API.
 
 ---
 
@@ -319,10 +343,11 @@ AUTHENTICATION_BACKENDS = [
      │           cartão de crédito, dados bancários, nomes próprios
      ├── substitui por placeholders: [CPF], [CNPJ], [EMAIL], [TELEFONE],
      │           [ENDERECO], [CARTAO], [CONTA_BANCARIA], [PESSOA]
-     └── registra ocorrências mascaradas no log de auditoria (pghistory context)
+     └── registra ocorrências mascaradas no log de auditoria
 5. SemanticChunker → divide nos pontos de mudança semântica do texto mascarado
      └── fallback: RecursiveCharacterTextSplitter se o texto for muito curto
-6. sentence-transformers → embeddings dos chunks (CPU)
+6. sentence-transformers → embeddings dos chunks em lote (CPU)
+     └── get_embeddings_batch() — mais eficiente que chamar get_embedding em loop
 7. bulk insert → KnowledgeChunk ou UserChunk
 8. status → "ready" / "error"
 ```
@@ -387,29 +412,10 @@ from presidio_anonymizer.entities import OperatorConfig
 analyzer = AnalyzerEngine()   # singleton — carregado uma vez por processo
 anonymizer = AnonymizerEngine()
 
-ENTITIES = [
-    "BR_CPF", "BR_CNPJ", "BR_RG",
-    "EMAIL_ADDRESS", "PHONE_NUMBER", "LOCATION",
-    "CREDIT_CARD", "IBAN_CODE", "PERSON",
-]
-
-OPERATORS = {
-    "BR_CPF":         OperatorConfig("replace", {"new_value": "[CPF]"}),
-    "BR_CNPJ":        OperatorConfig("replace", {"new_value": "[CNPJ]"}),
-    "BR_RG":          OperatorConfig("replace", {"new_value": "[RG]"}),
-    "EMAIL_ADDRESS":  OperatorConfig("replace", {"new_value": "[EMAIL]"}),
-    "PHONE_NUMBER":   OperatorConfig("replace", {"new_value": "[TELEFONE]"}),
-    "LOCATION":       OperatorConfig("replace", {"new_value": "[ENDERECO]"}),
-    "CREDIT_CARD":    OperatorConfig("replace", {"new_value": "[CARTAO]"}),
-    "IBAN_CODE":      OperatorConfig("replace", {"new_value": "[CONTA_BANCARIA]"}),
-    "PERSON":         OperatorConfig("replace", {"new_value": "[PESSOA]"}),
-}
-
 def mask(text: str, language: str = "pt") -> tuple[str, list[dict]]:
     """
     Mascara dados sensíveis no texto.
     Retorna (texto_mascarado, lista_de_ocorrencias).
-    A lista de ocorrências é gravada no log de auditoria via pghistory context.
     """
     results = analyzer.analyze(text=text, language=language, entities=ENTITIES)
     anonymized = anonymizer.anonymize(text=text, analyzer_results=results, operators=OPERATORS)
@@ -425,9 +431,9 @@ texto bruto extraído
         ▼
 privacy_filter.mask()      ← mascaramento PII/LGPD
         │
-        ├── texto mascarado → SemanticChunker → embeddings → pgvector
+        ├── texto mascarado → SemanticChunker → get_embeddings_batch() → pgvector
         │
-        └── ocorrências     → pghistory context → log de auditoria
+        └── ocorrências     → log de auditoria
 ```
 
 ### Aplicação
@@ -447,9 +453,9 @@ uv run python -m spacy download pt_core_news_lg
 ### Observações
 
 - O texto **original** do arquivo nunca é armazenado no pgvector — apenas o texto mascarado entra nos chunks
-- O arquivo físico original permanece no disco (`media/uploads/`) sem modificação — o mascaramento é aplicado apenas ao texto extraído em memória durante a indexação
+- O arquivo físico original permanece no disco (`media/uploads/`) sem modificação
 - O score de confiança de cada detecção fica registrado nas ocorrências, permitindo revisar falsos positivos
-- Nomes próprios (`PERSON`) tendem a ter maior taxa de falsos positivos — o threshold de confiança mínimo é configurável via `PRIVACY_MIN_SCORE`
+- Nomes próprios (`PERSON`) tendem a ter maior taxa de falsos positivos — o threshold de confiança mínimo é configurável via `PRIVACY_MIN_SCORE` (padrão: 0.7)
 
 ---
 
@@ -488,32 +494,12 @@ ragas_embeddings = LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(
 ))
 
 METRICS = [faithfulness, answer_relevancy, context_recall, context_precision]
-
-def evaluate_pipeline(dataset):
-    """
-    dataset: lista de dicts com keys:
-      - question       (str)
-      - answer         (str — resposta gerada pelo LLM)
-      - contexts       (list[str] — chunks usados no prompt)
-      - ground_truth   (str — resposta esperada, para context_recall)
-    """
-    return evaluate(
-        dataset=dataset,
-        metrics=METRICS,
-        llm=ragas_llm,
-        embeddings=ragas_embeddings,
-    )
 ```
 
 ### Management command de avaliação
 
-```
-apps/knowledge/management/commands/
-└── eval_rag.py          # python manage.py eval_rag --collection <slug> --samples 20
-```
-
-Execução:
 ```bash
+# apps habilitados: knowledge
 python manage.py eval_rag --collection politicas-rh --samples 20
 # Saída:
 # faithfulness        0.87
@@ -532,67 +518,72 @@ python manage.py eval_rag --collection politicas-rh --samples 20
 
 ---
 
-## 08 · Infraestrutura de Deployment
+## 08 · Infraestrutura de Desenvolvimento
 
-### Fase dev (atual)
+### Arquivo: `docker-compose-infra.yml`
 
-| Componente | Onde roda | Endereço |
+Sobe os serviços de infraestrutura. O Django e o Celery rodam diretamente no host via `uv`.
+
+| Serviço | Imagem | Porta host → container |
 |---|---|---|
-| Django + Celery | Windows (uv run) | localhost:8000 |
-| Ollama | Windows (nativo) | 0.0.0.0:11434 |
-| PostgreSQL + pgvector | Rancher (container) | localhost:5432 |
-| Redis | Rancher (container) | localhost:6379 |
-| Keycloak | Rancher (container) | localhost:8080 |
+| `db` | pgvector/pgvector:pg16 | **15432**:5432 |
+| `redis` | redis:7-alpine | **6380**:6379 |
+| `keycloak` | quay.io/keycloak/keycloak:24.0 | **8081**:8080 |
+| `redis-commander` | rediscommander/redis-commander | **8082**:8081 |
 
-### Fase prod (futura)
-
-| Componente | Onde roda | Endereço |
-|---|---|---|
-| Django + Celery | Rancher (container) | — |
-| Ollama | Windows (nativo) | host-gateway:11434 |
-| PostgreSQL + pgvector | Rancher (container) | postgres:5432 |
-| Redis | Rancher (container) | redis:6379 |
-| Keycloak | Rancher (container) | keycloak:8080 |
-
-### docker-compose.yml — serviços
+> **Atenção às portas:** PostgreSQL expõe na **15432** e Redis na **6380** (não nas padrões 5432 / 6379). O Keycloak fica em **localhost:8081**.
 
 ```yaml
+# Trecho relevante do docker-compose-infra.yml
 services:
-
-  postgres:
+  db:
     image: pgvector/pgvector:pg16
+    ports: ["15432:5432"]
     environment:
       POSTGRES_DB: django_rag
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports: ["5432:5432"]
-    healthcheck: ...
+      POSTGRES_PASSWORD: postgres
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
-    volumes:
-      - redis_data:/data
+    ports: ["6380:6379"]
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
+    ports: ["8081:8080"]
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: postgres
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
-    command: start-dev
-    ports: ["8080:8080"]
-    depends_on: [postgres]
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_HOSTNAME_URL: http://localhost:8081
+    depends_on:
+      db:
+        condition: service_healthy
 
-# fase prod — Django + Celery entram aqui
-# extra_hosts: ["host-gateway:host-gateway"]
-# OLLAMA_BASE_URL: http://host-gateway:11434
+  redis-commander:
+    image: rediscommander/redis-commander
+    ports: ["8082:8081"]     # UI Redis: http://localhost:8082
 ```
+
+### Configuração de endereços no `.env` (desenvolvimento)
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:15432/django_rag
+REDIS_URL=redis://localhost:6380/0
+CELERY_BROKER_URL=redis://localhost:6380/0
+CELERY_RESULT_BACKEND=redis://localhost:6380/1
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8081/realms/django-rag/...
+```
+
+### Fase prod (futura)
+
+| Componente | Onde roda | Obs |
+|---|---|---|
+| Django + Celery | container (Rancher) | — |
+| Ollama | Windows (nativo) | `OLLAMA_BASE_URL=http://host-gateway:11434` |
+| PostgreSQL + pgvector | container (Rancher) | portas padrão internas |
+| Redis | container (Rancher) | portas padrão internas |
+| Keycloak | container (Rancher) | portas padrão internas |
 
 ### Estimativa de RAM (Rancher · 4GB)
 
@@ -607,79 +598,123 @@ services:
 
 ---
 
-## 09 · Dependências (pyproject.toml)
+## 09 · URLs do Projeto
+
+Todas as rotas são prefixadas em `/rag/`. A raiz `/` redireciona para `/rag/`.
+
+```
+/                          →  redirect 302 para /rag/
+/rag/                      →  home
+/rag/admin/                →  Django Admin
+/rag/oidc/authenticate/    →  inicia fluxo OIDC (redirect para Keycloak)
+/rag/oidc/callback/        →  callback pós-login Keycloak
+/rag/oidc/logout/          →  logout federado (Keycloak + sessão Django)
+/rag/accounts/profile/     →  perfil do usuário
+/rag/__debug__/            →  Django Debug Toolbar (apenas DEBUG=True)
+```
+
+---
+
+## 10 · Dependências (pyproject.toml)
 
 ### Produção
 
 ```toml
-[project.dependencies]
-django = ">=4.2,<5.0"
-djangorestframework = ">=3.14"
-django-channels = ">=4.0"
-channels-redis = ">=4.0"
-mozilla-django-oidc = ">=4.0"
-django-environ = ">=0.11"
-django-redis = ">=5.4"
-celery = {extras = ["redis"], version = ">=5.3"}
-psycopg = {extras = ["binary"], version = ">=3.1"}
-pgvector = ">=0.3"
-langchain = ">=0.2"
-langchain-community = ">=0.2"
-langchain-postgres = ">=0.0.9"
-langchain-ollama = ">=0.1"
-langchain-experimental = ">=0.0.60"   # SemanticChunker
-sentence-transformers = ">=3.0"       # embeddings + CrossEncoder reranker
-presidio-analyzer = ">=2.2"           # detecção de PII/LGPD
-presidio-anonymizer = ">=2.2"         # mascaramento de PII/LGPD
-spacy = ">=3.7"                       # NLP para Presidio (pt_core_news_lg)
-pypdf = ">=4.0"
-python-docx = ">=1.1"
-ragas = ">=0.1"                       # avaliação do pipeline RAG
-datasets = ">=2.0"                    # dependência do ragas
+[project]
+requires-python = ">=3.12,<3.14"
+
+dependencies = [
+    # Web / API
+    "django>=6.0,<7.0",
+    "djangorestframework>=3.15",
+    # WebSocket
+    "channels>=4.1",
+    "channels-redis>=4.1",
+    "daphne>=4.1",
+    # Autenticação OIDC
+    "mozilla-django-oidc>=4.0",
+    # Configuração / ambiente
+    "django-environ>=0.11",
+    # Cache / sessão
+    "django-redis>=5.4",
+    # Task queue
+    "celery[redis]>=5.3",
+    # Banco de dados
+    "psycopg[binary]>=3.1",
+    "pgvector>=0.3",
+    # LangChain
+    "langchain>=0.2",
+    "langchain-community>=0.2",
+    "langchain-postgres>=0.0.9",
+    "langchain-ollama>=0.1",
+    "langchain-experimental>=0.0.60",   # SemanticChunker
+    # Embeddings + reranker
+    "sentence-transformers>=3.0",
+    # Filtro de privacidade PII/LGPD
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
+    "spacy>=3.7",
+    # Extração de texto
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    # Avaliação do pipeline RAG
+    "ragas>=0.1",
+    "datasets>=2.0",
+    # Tipos Celery + Arrow
+    "celery-types>=0.26.0",
+    "pyarrow>=18.0,<19.0",
+]
 ```
 
 ### Desenvolvimento
 
 ```toml
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-  "pytest",
-  "pytest-django",
-  "pytest-asyncio",
-  "factory-boy",
-  "ruff",
-  "mypy",
-  "django-debug-toolbar",
-  "ipython",
+    "pytest",
+    "pytest-django",
+    "pytest-asyncio",
+    "factory-boy",
+    "ruff",
+    "mypy",
+    "django-stubs",
+    "djangorestframework-stubs",
+    "django-debug-toolbar",
+    "ipython",
 ]
 ```
 
 ---
 
-## 10 · Variáveis de Ambiente (.env.example)
+## 11 · Variáveis de Ambiente (.env.example)
 
 ```bash
 # Django
-SECRET_KEY=troque-em-producao
+SECRET_KEY=troque-em-producao-use-uma-chave-longa-e-aleatoria
 DEBUG=True
 ALLOWED_HOSTS=localhost,127.0.0.1
 DJANGO_SETTINGS_MODULE=config.settings.development
 
-# PostgreSQL
+# PostgreSQL (porta 15432 — mapeada pelo docker-compose-infra.yml)
 POSTGRES_DB=django_rag
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/django_rag
+DATABASE_URL=postgresql://postgres:postgres@localhost:15432/django_rag
 
-# Redis / Celery
-REDIS_URL=redis://localhost:6379/0
-CELERY_BROKER_URL=redis://localhost:6379/0
-CELERY_RESULT_BACKEND=redis://localhost:6379/1
+# Redis / Celery (porta 6380 — mapeada pelo docker-compose-infra.yml)
+REDIS_URL=redis://localhost:6380/0
+CELERY_BROKER_URL=redis://localhost:6380/0
+CELERY_RESULT_BACKEND=redis://localhost:6380/1
 
 # Ollama
 # dev: localhost | prod (container): http://host-gateway:11434
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_LLM_MODEL=llama3.2:3b
+OLLAMA_NUM_CTX=2048
+OLLAMA_NUM_THREAD=4
+OLLAMA_TEMPERATURE=0.3
+
+# Embeddings
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 
 # RAG pipeline
@@ -691,24 +726,25 @@ RAG_CHUNK_SIZE=500
 RAG_CHUNK_OVERLAP=50
 
 # Filtro de privacidade PII/LGPD
-PRIVACY_MIN_SCORE=0.7          # score mínimo de confiança para mascarar (0.0–1.0)
-PRIVACY_LANGUAGE=pt            # idioma do analisador Presidio
+# PRIVACY_MIN_SCORE não está no .env.example mas é lido em settings/base.py (default 0.7)
 
-# Keycloak OIDC
-OIDC_RP_CLIENT_ID=django
+# Keycloak OIDC (porta 8081 — mapeada pelo docker-compose-infra.yml)
+OIDC_RP_CLIENT_ID=django_cli
 OIDC_RP_CLIENT_SECRET=troque-pelo-secret-do-keycloak
-OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8080/realms/django-rag/protocol/openid-connect/auth
-OIDC_OP_TOKEN_ENDPOINT=http://localhost:8080/realms/django-rag/protocol/openid-connect/token
-OIDC_OP_USER_ENDPOINT=http://localhost:8080/realms/django-rag/protocol/openid-connect/userinfo
-OIDC_OP_JWKS_ENDPOINT=http://localhost:8080/realms/django-rag/protocol/openid-connect/certs
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/auth
+OIDC_OP_TOKEN_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/token
+OIDC_OP_USER_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/userinfo
+OIDC_OP_JWKS_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/certs
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8081/realms/django-rag/protocol/openid-connect/logout
+OIDC_RENEW_ID_TOKEN_EXPIRY_SECONDS=60
 
-# Keycloak Admin (docker-compose)
+# Keycloak Admin
 KEYCLOAK_ADMIN_PASSWORD=admin
 ```
 
 ---
 
-## 11 · Parâmetros RAG
+## 12 · Parâmetros RAG
 
 | Parâmetro | Valor | Justificativa |
 |---|---|---|
@@ -720,8 +756,39 @@ KEYCLOAK_ADMIN_PASSWORD=admin
 | `RAG_CHUNK_SIZE` | 500 tokens | tamanho máximo no chunking de fallback |
 | `RAG_CHUNK_OVERLAP` | 50 tokens | sobreposição no chunking de fallback |
 | `RAG_TOP_K` | 4 chunks | chunks finais no prompt (pós-reranking) |
-| `RAG_RERANK_FACTOR` | 3 | busca top-k × 3 candidatos antes do reranker |
+| `RAG_RERANK_FACTOR` | 3 | busca top_k × 3 candidatos antes do reranker |
 | `RAG_SEMANTIC_BREAKPOINT` | `percentile` | estratégia do SemanticChunker |
 | `OLLAMA_NUM_CTX` | 2048 | janela menor = mais rápido em CPU |
 | `OLLAMA_NUM_THREAD` | 4 | todos os threads do i7-7500U |
-| Temperatura | 0.3 | respostas mais determinísticas para RAG |
+| `OLLAMA_TEMPERATURE` | 0.3 | respostas mais determinísticas para RAG |
+
+---
+
+## 13 · Testes
+
+```bash
+# Roda todos os testes
+uv run pytest
+
+# Pula testes lentos (carregam modelos ML)
+uv run pytest -m "not slow"
+
+# Testes com cobertura
+uv run pytest --cov=apps
+
+# Testes de um app específico
+uv run pytest apps/core/tests.py
+```
+
+Marcadores disponíveis:
+
+| Marker | Descrição |
+|---|---|
+| `slow` | Testes que carregam sentence-transformers, Presidio ou CrossEncoder |
+
+Configuração em `pyproject.toml`:
+```toml
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.development"
+asyncio_mode = "auto"
+```
