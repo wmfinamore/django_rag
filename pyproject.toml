@@ -49,6 +49,7 @@ dependencies = [
     "ragas>=0.1",
     "datasets>=2.0",
     "celery-types>=0.26.0",
+    "pyarrow>=18.0,<19.0",
 ]
 
 [project.optional-dependencies]
