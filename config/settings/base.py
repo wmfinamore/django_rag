@@ -47,14 +47,15 @@ DJANGO_APPS = [
 ]
 
 THIRD_PARTY_APPS = [
-    #"rest_framework",
-    #"channels",
+    "rest_framework",
+    "channels",
     "mozilla_django_oidc",
 ]
 
 LOCAL_APPS = [
-    #"apps.core",
+    "apps.core",
     "apps.accounts",
+    # Habilitados quando as apps forem implementadas:
     #"apps.knowledge",
     #"apps.documents",
     #"apps.chat",
@@ -277,3 +278,15 @@ RAG_RERANKER_MODEL = env(
 RAG_SEMANTIC_BREAKPOINT = env("RAG_SEMANTIC_BREAKPOINT", default="percentile")
 RAG_CHUNK_SIZE = env.int("RAG_CHUNK_SIZE", default=500)
 RAG_CHUNK_OVERLAP = env.int("RAG_CHUNK_OVERLAP", default=50)
+
+# ---------------------------------------------------------------------------
+# Filtro de privacidade PII/LGPD (Presidio)
+# ---------------------------------------------------------------------------
+
+# Score mínimo de confiança para mascarar uma entidade detectada (0.0–1.0).
+# Abaixo deste valor a entidade é ignorada (evita falsos positivos).
+PRIVACY_MIN_SCORE = env.float("PRIVACY_MIN_SCORE", default=0.7)
+
+# Idioma do analisador Presidio. Requer modelo spaCy compatível instalado:
+#   uv run python -m spacy download pt_core_news_lg
+PRIVACY_LANGUAGE = env("PRIVACY_LANGUAGE", default="pt")
