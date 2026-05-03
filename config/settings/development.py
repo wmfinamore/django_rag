@@ -43,6 +43,15 @@ INTERNAL_IPS = ["127.0.0.1"]
 # }
 
 # ---------------------------------------------------------------------------
+# Celery — Windows não suporta o pool prefork (fork); usa solo em dev
+# ---------------------------------------------------------------------------
+
+# O pool "solo" executa tasks no mesmo processo/thread, sem spawn de workers
+# filhos. É single-threaded mas funciona perfeitamente no Windows para dev.
+# Em produção Linux o prefork padrão é usado automaticamente.
+CELERY_WORKER_POOL = "solo"
+
+# ---------------------------------------------------------------------------
 # E-mail — saída no terminal
 # ---------------------------------------------------------------------------
 

@@ -27,6 +27,8 @@ base_urlpatterns = [
     path('oidc/', include('mozilla_django_oidc.urls')),
     # App accounts — perfil e outras rotas locais
     path('accounts/', include('apps.accounts.urls', namespace='accounts')),
+    # App knowledge — base de conhecimento institucional (REST API)
+    path('api/knowledge/', include('apps.knowledge.urls', namespace='knowledge')),
     # Home
     path('', accounts_views.home, name='home'),
 ]

@@ -55,8 +55,8 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "apps.core",
     "apps.accounts",
+    "apps.knowledge",
     # Habilitados quando as apps forem implementadas:
-    #"apps.knowledge",
     #"apps.documents",
     #"apps.chat",
 ]

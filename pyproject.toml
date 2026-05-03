@@ -19,18 +19,18 @@ dependencies = [
     "channels>=4.1",
     "channels-redis>=4.1",
     "daphne>=4.1",
-    # Autenticação OIDC
+    # Autenticacao OIDC
     "mozilla-django-oidc>=4.0",
-    # Configuração / ambiente
+    # Configuracao / ambiente
     "django-environ>=0.11",
-    # Cache / sessão
+    # Cache / sessao
     "django-redis>=5.4",
     # Task queue
     "celery[redis]>=5.3",
     # Banco de dados
     "psycopg[binary]>=3.1",
     "pgvector>=0.3",
-    # LangChain (chunking, integração Ollama)
+    # LangChain (chunking, integracao Ollama)
     "langchain>=0.2",
     "langchain-community>=0.2",
     "langchain-postgres>=0.0.9",
@@ -42,10 +42,10 @@ dependencies = [
     "presidio-analyzer>=2.2",
     "presidio-anonymizer>=2.2",
     "spacy>=3.7",
-    # Extração de texto de documentos
+    # Extracao de texto de documentos
     "pypdf>=4.0",
     "python-docx>=1.1",
-    # Avaliação do pipeline RAG
+    # Avaliacao do pipeline RAG
     "ragas>=0.1",
     "datasets>=2.0",
     "celery-types>=0.26.0",
@@ -82,7 +82,7 @@ dev = [
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.development"
-python_files = ["test_*.py", "*_test.py"]
+python_files = ["test_*.py", "*_test.py", "tests.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
