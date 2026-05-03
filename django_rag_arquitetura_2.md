@@ -60,16 +60,15 @@ django_rag/
 │   │   ├── views.py               # home, profile
 │   │   └── urls.py
 │   │
-│   ├── knowledge/                 # base de conhecimento institucional (não habilitado ainda)
+│   ├── knowledge/                 # base de conhecimento institucional (habilitado)
 │   │   ├── models.py              # KnowledgeCollection, KnowledgeDocument, KnowledgeChunk
-│   │   ├── admin.py
-│   │   ├── serializers.py
-│   │   ├── views.py
-│   │   ├── urls.py
-│   │   └── management/
-│   │       └── commands/
-│   │           ├── ingest_knowledge.py   # CLI de ingestão em lote
-│   │           └── eval_rag.py           # CLI de avaliação com Ragas
+│   │   ├── admin.py               # admin com inline, ações de indexação e badge de status
+│   │   ├── serializers.py         # serializers DRF + upload com validação
+│   │   ├── views.py               # ViewSets REST (collections, documents)
+│   │   ├── urls.py                # router DRF
+│   │   ├── tests.py               # 84 testes (permissions, upload, CRUD, reindex)
+│   │   └── migrations/
+│   │       └── 0001_initial.py    # inclui RunSQL CREATE EXTENSION vector
 │   │
 │   ├── documents/                 # documentos pessoais do usuário (não habilitado ainda)
 │   │   ├── models.py              # UserDocument, UserChunk
@@ -114,8 +113,8 @@ django_rag/
 └── manage.py
 ```
 
-> Apps habilitados atualmente em `INSTALLED_APPS`: `apps.core`, `apps.accounts`.
-> Apps `knowledge`, `documents` e `chat` estão implementados mas comentados — serão habilitados progressivamente.
+> Apps habilitados atualmente em `INSTALLED_APPS`: `apps.core`, `apps.accounts`, `apps.knowledge`.
+> Apps `documents` e `chat` estão implementados mas comentados — serão habilitados progressivamente.
 
 ---
 
@@ -611,7 +610,27 @@ Todas as rotas são prefixadas em `/rag/`. A raiz `/` redireciona para `/rag/`.
 /rag/oidc/logout/          →  logout federado (Keycloak + sessão Django)
 /rag/accounts/profile/     →  perfil do usuário
 /rag/__debug__/            →  Django Debug Toolbar (apenas DEBUG=True)
+
+# API de Conhecimento
+/rag/api/knowledge/collections/                  →  GET lista coleções acessíveis · POST cria coleção (staff)
+/rag/api/knowledge/collections/<id>/             →  GET detalhe da coleção
+/rag/api/knowledge/collections/<id>/documents/   →  GET lista docs · POST upload + indexação (staff)
+/rag/api/knowledge/documents/<id>/               →  GET detalhe do documento
+/rag/api/knowledge/documents/<id>/               →  DELETE remove doc e chunks (staff)
+/rag/api/knowledge/documents/<id>/reindex/       →  POST re-indexa o documento (staff/admin)
 ```
+
+### Controle de acesso na API de Conhecimento
+
+| Operação | Requisito |
+|---|---|
+| Listar / ver coleções e documentos | autenticado + pertencer ao grupo da coleção (ou coleção pública) |
+| Criar coleção | `is_staff = True` |
+| Upload de documento | `is_staff = True` |
+| Remover documento | `is_staff = True` |
+| Re-indexar documento | `is_staff = True` (admin) |
+
+> Coleções sem `allowed_groups` são públicas — qualquer usuário autenticado tem acesso. Superusuários acessam tudo.
 
 ---
 
@@ -780,6 +799,35 @@ uv run pytest --cov=apps
 uv run pytest apps/core/tests.py
 ```
 
+Cobertura por app:
+
+| App | Arquivo | Testes | Cobertura |
+|---|---|---|---|
+| `apps.core` | `apps/core/tests.py` | — | — |
+| `apps.accounts` | `apps/accounts/tests.py` | — | — |
+| `apps.knowledge` | `apps/knowledge/tests.py` | **84** | permissions, upload, CRUD, reindex, acesso por grupo |
+
+### Testes da app knowledge
+
+Organização dos 84 testes em 11 classes:
+
+| Classe | O que testa |
+|---|---|
+| `TestKnowledgeCollectionModel` | `is_accessible_by()` — público, restrito por grupo, inativo |
+| `TestKnowledgeDocumentModel` | `trigger_indexing()`, `trigger_reindex()` via mock Celery |
+| `TestKnowledgeChunkModel` | criação de chunk com embedding de dimensão correta |
+| `TestIsStaffOrReadOnly` | permissão customizada — GET vs POST para staff/não-staff |
+| `TestCollectionListCreate` | GET lista, POST cria (staff), filtragem por grupo, 401 anônimo |
+| `TestCollectionRetrieve` | detalhe de coleção — acesso/restrição por grupo |
+| `TestCollectionDocuments` | GET lista docs da coleção, filtro por status |
+| `TestDocumentUpload` | POST upload — tipos válidos/inválidos, tamanho, 400/201 |
+| `TestDocumentRetrieve` | GET detalhe do documento — acesso/restrição |
+| `TestDocumentDelete` | DELETE — staff vs não-staff, fallback sem Celery |
+| `TestDocumentReindex` | POST reindex — staff vs não-staff, doc já em indexação (409) |
+
+> Celery é mockado via `@patch("apps.core.tasks.index_document.delay")` — testes não precisam de Redis.
+> Uploads usam `django.test.SimpleUploadedFile` — não requerem disco real.
+
 Marcadores disponíveis:
 
 | Marker | Descrição |
@@ -791,4 +839,5 @@ Configuração em `pyproject.toml`:
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.development"
 asyncio_mode = "auto"
+python_files = ["test_*.py", "*_test.py", "tests.py"]
 ```

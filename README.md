@@ -124,7 +124,7 @@ Necessário para o filtro de PII/LGPD em português.
 uv run python manage.py migrate
 ```
 
-Isso cria todas as tabelas no PostgreSQL (incluindo a extensão `pgvector`).
+Isso cria todas as tabelas no PostgreSQL, incluindo a extensão `pgvector` e as tabelas da app `knowledge`.
 
 ### 10. Criar um superusuário local (opcional)
 
@@ -156,6 +156,8 @@ uv run celery -A config worker -l info
 
 O Celery é necessário para indexação assíncrona de documentos (tasks `index_document`, `delete_document`, `reindex_document`).
 
+> **Windows:** o pool `prefork` padrão não é suportado. O `development.py` já configura `CELERY_WORKER_POOL = "solo"` automaticamente — nenhuma flag adicional é necessária.
+
 ---
 
 ## Estrutura de URLs
@@ -168,7 +170,65 @@ O Celery é necessário para indexação assíncrona de documentos (tasks `index
 | `/rag/oidc/callback/` | Callback OIDC pós-login |
 | `/rag/oidc/logout/` | Logout federado (Keycloak + Django) |
 | `/rag/accounts/profile/` | Perfil do usuário autenticado |
+| `/rag/api/knowledge/collections/` | API REST — coleções de conhecimento |
+| `/rag/api/knowledge/collections/<id>/documents/` | API REST — documentos de uma coleção |
+| `/rag/api/knowledge/documents/<id>/` | API REST — detalhe / deleção de documento |
+| `/rag/api/knowledge/documents/<id>/reindex/` | API REST — re-indexação de documento |
 | `/rag/__debug__/` | Django Debug Toolbar (só com DEBUG=True) |
+
+---
+
+## API de Conhecimento
+
+A app `knowledge` expõe uma API REST para gerenciar a base de conhecimento institucional.
+
+### Coleções
+
+```bash
+# Listar coleções acessíveis ao usuário autenticado
+GET /rag/api/knowledge/collections/
+
+# Criar nova coleção (requer is_staff)
+POST /rag/api/knowledge/collections/
+{"name": "Políticas de RH", "description": "..."}
+
+# Detalhe de uma coleção
+GET /rag/api/knowledge/collections/<uuid>/
+
+# Listar documentos da coleção (filtro opcional: ?status=ready)
+GET /rag/api/knowledge/collections/<uuid>/documents/
+
+# Upload de documento para a coleção (requer is_staff, multipart/form-data)
+POST /rag/api/knowledge/collections/<uuid>/documents/
+  title=<string>  file=<arquivo pdf|docx|txt|md>
+```
+
+### Documentos
+
+```bash
+# Detalhe do documento (status de indexação, chunks_count)
+GET /rag/api/knowledge/documents/<uuid>/
+
+# Remover documento e chunks (requer is_staff)
+# A deleção é assíncrona via Celery — retorna 202 Accepted
+DELETE /rag/api/knowledge/documents/<uuid>/
+
+# Re-indexar documento (requer is_staff/admin)
+# Retorna 202 Accepted com task_id
+POST /rag/api/knowledge/documents/<uuid>/reindex/
+```
+
+### Controle de acesso
+
+| Operação | Permissão necessária |
+|---|---|
+| Listar / ler coleções e documentos | Autenticado + pertencer ao grupo da coleção (ou coleção pública) |
+| Criar coleções | `is_staff = True` |
+| Upload de documentos | `is_staff = True` |
+| Deletar documentos | `is_staff = True` |
+| Re-indexar documentos | `is_staff = True` e `is_superuser = True` |
+
+Coleções sem grupos em `allowed_groups` são **públicas** (qualquer autenticado acessa). Superusuários acessam tudo independentemente dos grupos.
 
 ---
 
@@ -177,6 +237,9 @@ O Celery é necessário para indexação assíncrona de documentos (tasks `index
 ```bash
 # Todos os testes
 uv run pytest
+
+# Apenas a app knowledge (84 testes)
+uv run pytest apps/knowledge/tests.py -v
 
 # Pular testes lentos (carregam modelos de ML)
 uv run pytest -m "not slow"
@@ -222,23 +285,11 @@ Variáveis que mais frequentemente precisam ser ajustadas:
 
 | App | Status | Responsabilidade |
 |---|---|---|
-| `apps.core` | ✅ habilitado | RAGService, reranker, privacy_filter, ragas_eval |
+| `apps.core` | ✅ habilitado | RAGService, reranker, privacy_filter, ragas_eval, tasks Celery |
 | `apps.accounts` | ✅ habilitado | CustomUser, OIDC backend, grupos |
-| `apps.knowledge` | 🔜 planejado | Base de conhecimento institucional, ingestão, coleções |
+| `apps.knowledge` | ✅ habilitado | Coleções, documentos institucionais, ingestão, API REST, 84 testes |
 | `apps.documents` | 🔜 planejado | Documentos pessoais do usuário |
 | `apps.chat` | 🔜 planejado | Conversas, WebSocket streaming |
-
-Para habilitar um app, descomente-o em `config/settings/base.py`:
-
-```python
-LOCAL_APPS = [
-    "apps.core",
-    "apps.accounts",
-    # "apps.knowledge",  ← descomente quando pronto
-    # "apps.documents",
-    # "apps.chat",
-]
-```
 
 ---
 
