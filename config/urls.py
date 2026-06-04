@@ -29,6 +29,8 @@ base_urlpatterns = [
     path('accounts/', include('apps.accounts.urls', namespace='accounts')),
     # App knowledge — base de conhecimento institucional (REST API)
     path('api/knowledge/', include('apps.knowledge.urls', namespace='knowledge')),
+    # App documents — documentos pessoais do usuario (REST API)
+    path('api/documents/', include('apps.documents.urls', namespace='documents')),
     # Home
     path('', accounts_views.home, name='home'),
 ]

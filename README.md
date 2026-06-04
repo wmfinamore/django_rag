@@ -195,6 +195,9 @@ O Celery é necessário para indexação assíncrona de documentos (tasks `index
 | `/rag/api/knowledge/collections/<id>/documents/` | API REST — documentos de uma coleção |
 | `/rag/api/knowledge/documents/<id>/` | API REST — detalhe / deleção de documento |
 | `/rag/api/knowledge/documents/<id>/reindex/` | API REST — re-indexação de documento |
+| `/rag/api/documents/` | API REST — documentos pessoais do usuário (lista / upload) |
+| `/rag/api/documents/<id>/` | API REST — detalhe / deleção de documento pessoal |
+| `/rag/api/documents/<id>/reindex/` | API REST — re-indexação de documento pessoal |
 | `/rag/__debug__/` | Django Debug Toolbar (só com DEBUG=True) |
 
 ---
@@ -253,9 +256,42 @@ Coleções sem grupos em `allowed_groups` são **públicas** (qualquer autentica
 
 ---
 
+## API de Documentos Pessoais
+
+A app `documents` expõe uma API REST para gerenciar documentos pessoais de cada usuário.
+
+```bash
+# Listar meus documentos
+GET /rag/api/documents/
+
+# Upload de documento pessoal (multipart/form-data)
+POST /rag/api/documents/
+  title=<string>  file=<arquivo pdf|docx|txt|md>
+
+# Detalhe do documento (status de indexação, chunks_count)
+GET /rag/api/documents/<uuid>/
+
+# Remover documento e chunks (assíncrono via Celery — retorna 202 Accepted)
+DELETE /rag/api/documents/<uuid>/
+
+# Re-indexar documento (retorna 202 Accepted com task_id)
+POST /rag/api/documents/<uuid>/reindex/
+```
+
+### Controle de acesso
+
+| Operação | Permissão necessária |
+|---|---|
+| Qualquer operação | Autenticado |
+| Acesso aos documentos | Apenas os próprios documentos (`owner = request.user`) |
+
+Superusuários **não** têm visibilidade especial — enxergam somente seus próprios documentos. Requisições anônimas recebem **403**.
+
+---
+
 ## Testes
 
-A suíte tem 223 testes divididos em dois grupos:
+A suíte tem 282 testes divididos em dois grupos:
 
 | Grupo | Marcação | O que cobre |
 |---|---|---|
@@ -263,7 +299,7 @@ A suíte tem 223 testes divididos em dois grupos:
 | Lentos | `@pytest.mark.slow` | Carregam modelos reais (sentence-transformers, CrossEncoder, Presidio + spaCy) |
 
 ```bash
-# Todos os testes (223)
+# Todos os testes (282)
 .venv\Scripts\python.exe -m pytest -v
 
 # Pular testes lentos — execução rápida para CI
@@ -274,6 +310,7 @@ A suíte tem 223 testes divididos em dois grupos:
 
 # Apenas uma app
 .venv\Scripts\python.exe -m pytest apps/knowledge/tests.py -v
+.venv\Scripts\python.exe -m pytest apps/documents/tests.py -v
 
 # Com relatório de cobertura
 .venv\Scripts\python.exe -m pytest --cov=apps
@@ -320,8 +357,8 @@ Variáveis que mais frequentemente precisam ser ajustadas:
 |---|---|---|
 | `apps.core` | ✅ habilitado | RAGService, reranker, privacy_filter, ragas_eval, tasks Celery |
 | `apps.accounts` | ✅ habilitado | CustomUser, OIDC backend, grupos |
-| `apps.knowledge` | ✅ habilitado | Coleções, documentos institucionais, ingestão, API REST, 84 testes |
-| `apps.documents` | 🔜 planejado | Documentos pessoais do usuário |
+| `apps.knowledge` | ✅ habilitado | Coleções, documentos institucionais, ingestão, API REST, 156 testes |
+| `apps.documents` | ✅ habilitado | Documentos pessoais do usuário, API REST, 59 testes |
 | `apps.chat` | 🔜 planejado | Conversas, WebSocket streaming |
 
 ---

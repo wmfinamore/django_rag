@@ -56,8 +56,8 @@ LOCAL_APPS = [
     "apps.core",
     "apps.accounts",
     "apps.knowledge",
+    "apps.documents",
     # Habilitados quando as apps forem implementadas:
-    #"apps.documents",
     #"apps.chat",
 ]
 

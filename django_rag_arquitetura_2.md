@@ -76,12 +76,15 @@ django_rag/
 │   │       ├── 0001_initial.py    # inclui RunSQL CREATE EXTENSION vector
 │   │       └── 0002_bulkimportjob_knowledgedocument_bulk_import_job.py
 │   │
-│   ├── documents/                 # documentos pessoais do usuário (não habilitado ainda)
+│   ├── documents/                 # documentos pessoais do usuário (habilitado)
 │   │   ├── models.py              # UserDocument, UserChunk
-│   │   ├── serializers.py
-│   │   ├── views.py               # upload / delete (DRF)
-│   │   ├── urls.py
-│   │   └── tasks.py               # index / delete / reindex
+│   │   ├── serializers.py         # UserDocumentSerializer + UserDocumentUploadSerializer
+│   │   ├── views.py               # UserDocumentViewSet (list, upload, delete, reindex)
+│   │   ├── urls.py                # router DRF → /api/documents/
+│   │   ├── admin.py               # admin UserDocument (badge status, actions) + UserChunk (readonly)
+│   │   ├── tasks.py               # re-exporta index/delete/reindex do core
+│   │   └── migrations/
+│   │       └── 0001_initial.py    # cria documents_userdocument e documents_userchunk
 │   │
 │   └── chat/                      # conversas e streaming (não habilitado ainda)
 │       ├── models.py              # Conversation, Message
@@ -120,8 +123,8 @@ django_rag/
 └── manage.py
 ```
 
-> Apps habilitados atualmente em `INSTALLED_APPS`: `apps.core`, `apps.accounts`, `apps.knowledge`.
-> Apps `documents` e `chat` estão implementados mas comentados — serão habilitados progressivamente.
+> Apps habilitados atualmente em `INSTALLED_APPS`: `apps.core`, `apps.accounts`, `apps.knowledge`, `apps.documents`.
+> App `chat` ainda não está implementada.
 
 ---
 
@@ -181,12 +184,13 @@ KnowledgeChunk                     ← tabela de vetores pgvector
 UserDocument
 ├── id                  UUIDField PK
 ├── owner               ForeignKey → CustomUser (CASCADE)
-├── title               CharField
-├── file                FileField
-├── file_type           CharField
-├── status              CharField  (pending · indexing · ready · error)
+├── title               CharField(300)
+├── file                FileField   ← upload_to="documents/%Y/%m/"
+├── file_type           CharField   (pdf · docx · txt · md)
+├── status              CharField   (pending · indexing · ready · error)
 ├── chunks_count        IntegerField
-└── (TimeStampedModel)
+├── error_message       TextField
+└── (TimeStampedModel)  created_at, updated_at
 
 UserChunk                          ← tabela de vetores pgvector
 ├── id                  UUIDField PK
@@ -196,6 +200,8 @@ UserChunk                          ← tabela de vetores pgvector
 ├── content             TextField
 └── embedding           VectorField(384)
 ```
+
+**Diferença-chave em relação a `KnowledgeDocument`:** o arquivo é armazenado via `FileField` do Django (gerenciado pelo ORM, removido automaticamente na deleção via Celery), enquanto `KnowledgeDocument` usa `file_path` (CharField com caminho absoluto no filesystem). Métodos `trigger_indexing()` e `trigger_reindex()` disparam as tasks do core com `doc_type="personal"`.
 
 ### Chat
 
@@ -678,6 +684,12 @@ Todas as rotas são prefixadas em `/rag/`. A raiz `/` redireciona para `/rag/`.
 /rag/api/knowledge/documents/<id>/                           →  GET detalhe do documento
 /rag/api/knowledge/documents/<id>/                           →  DELETE remove doc e chunks (staff)
 /rag/api/knowledge/documents/<id>/reindex/                   →  POST re-indexa o documento (admin)
+
+# API de Documentos Pessoais
+/rag/api/documents/               →  GET lista documentos do usuário autenticado · POST upload + indexação
+/rag/api/documents/<id>/          →  GET detalhe do documento
+/rag/api/documents/<id>/          →  DELETE remove documento e chunks (202 Accepted — assíncrono)
+/rag/api/documents/<id>/reindex/  →  POST re-indexa o documento (202 Accepted)
 ```
 
 ### Controle de acesso na API de Conhecimento
@@ -692,6 +704,17 @@ Todas as rotas são prefixadas em `/rag/`. A raiz `/` redireciona para `/rag/`.
 | Bulk import (listar / criar / ver job) | `is_superuser` (`IsAdminUser`) |
 
 > Coleções sem `allowed_groups` são públicas — qualquer usuário autenticado tem acesso. Superusuários acessam tudo.
+
+### Controle de acesso na API de Documentos Pessoais
+
+| Operação | Requisito |
+|---|---|
+| Listar / ver documentos | autenticado — retorna apenas documentos do próprio usuário |
+| Upload | autenticado — o `owner` é sempre definido como o usuário da requisição |
+| Deletar | autenticado + proprietário do documento |
+| Re-indexar | autenticado + proprietário do documento |
+
+> Não há acesso privilegiado: superusuários enxergam **apenas seus próprios** documentos. O isolamento é garantido pelo filtro `owner=request.user` no `get_queryset()`. Requisições anônimas recebem **403** (o projeto usa sessão/OIDC, sem `WWW-Authenticate`).
 
 ---
 
@@ -867,6 +890,7 @@ Cobertura por app:
 | `apps.core` | `apps/core/tests.py` | **54** |
 | `apps.accounts` | `apps/accounts/tests.py` | **13** |
 | `apps.knowledge` | `apps/knowledge/tests.py` | **156** |
+| `apps.documents` | `apps/documents/tests.py` | **59** |
 
 ### Testes da app core (54 testes · 8 classes)
 
@@ -920,6 +944,25 @@ Cobertura por app:
 
 > Celery é mockado via `@patch("apps.core.tasks.index_document.delay")` — testes não precisam de Redis.
 > Uploads usam `django.test.SimpleUploadedFile` — não requerem disco real.
+
+### Testes da app documents (59 testes · 9 classes)
+
+| Classe | O que testa |
+|---|---|
+| `TestUserDocumentModel` | campos, `__str__`, `is_ready`, `trigger_indexing()`, `trigger_reindex()`, cascade |
+| `TestUserChunkModel` | campos, `__str__`, `unique_together`, cascade, `user_id` desnormalizado |
+| `TestUserDocumentSerializer` | campos presentes, `owner_username`, `status_display`, `file_url`, `read_only_fields` |
+| `TestUserDocumentUploadSerializer` | extensões válidas (pdf/docx/txt/md), extensão inválida, arquivo > 50MB, campos obrigatórios |
+| `TestDocumentListAPI` | 403 anônimo, isolamento por `owner`, lista vazia, paginação, superuser vê só seus docs |
+| `TestDocumentUploadAPI` | 403 anônimo, criação com task_id, upload pdf, extensão inválida, campos obrigatórios, fallback sem Celery, owner correto |
+| `TestDocumentRetrieveAPI` | 403 anônimo, proprietário acessa, outro usuário recebe 404, doc inexistente, campos na resposta |
+| `TestDocumentDestroyAPI` | 403 anônimo, 202 com Celery, outro usuário recebe 404, fallback síncrono (204) sem Celery, doc inexistente |
+| `TestDocumentReindexAPI` | 403 anônimo, 202 com task_id, outro usuário recebe 404, 409 se já indexando, doc inexistente, 500 se Celery falha |
+
+**Observações específicas dos testes de documents:**
+- Anônimos recebem **403** (não 401) — comportamento correto com autenticação por sessão sem `WWW-Authenticate`.
+- Listagem usa paginação DRF: acessar `response.data["results"]` e `response.data["count"]`, não `response.data` diretamente.
+- `make_document()` no helper define `doc.file.name` diretamente (sem salvar arquivo real no disco), mantendo testes rápidos.
 
 Marcadores disponíveis:
 
