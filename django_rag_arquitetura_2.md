@@ -47,7 +47,8 @@ django_rag/
 │   │   ├── reranker.py            # CrossEncoder reranker (ms-marco-MiniLM)
 │   │   ├── privacy_filter.py      # filtro PII/LGPD com Presidio (mascaramento)
 │   │   ├── ragas_eval.py          # avaliação do pipeline com Ragas
-│   │   ├── tasks.py               # tasks Celery compartilhadas
+│   │   ├── tasks.py               # tasks Celery: index_document, delete_document, reindex_document
+│   │   ├── views.py
 │   │   ├── utils.py
 │   │   ├── mixins.py
 │   │   └── exceptions.py          # EmbeddingError, LLMError, RAGError
@@ -61,14 +62,19 @@ django_rag/
 │   │   └── urls.py
 │   │
 │   ├── knowledge/                 # base de conhecimento institucional (habilitado)
-│   │   ├── models.py              # KnowledgeCollection, KnowledgeDocument, KnowledgeChunk
+│   │   ├── models.py              # KnowledgeCollection, KnowledgeDocument, KnowledgeChunk, BulkImportJob
 │   │   ├── admin.py               # admin com inline, ações de indexação e badge de status
-│   │   ├── serializers.py         # serializers DRF + upload com validação
-│   │   ├── views.py               # ViewSets REST (collections, documents)
+│   │   ├── serializers.py         # serializers DRF + upload + BulkImportJob
+│   │   ├── views.py               # ViewSets REST (collections, documents, bulk-import)
+│   │   ├── tasks.py               # run_bulk_import (Celery)
 │   │   ├── urls.py                # router DRF
-│   │   ├── tests.py               # 84 testes (permissions, upload, CRUD, reindex)
+│   │   ├── tests.py               # 156 testes (23 classes)
+│   │   ├── management/
+│   │   │   └── commands/
+│   │   │       └── bulk_ingest_knowledge.py  # importação em lote via CLI
 │   │   └── migrations/
-│   │       └── 0001_initial.py    # inclui RunSQL CREATE EXTENSION vector
+│   │       ├── 0001_initial.py    # inclui RunSQL CREATE EXTENSION vector
+│   │       └── 0002_bulkimportjob_knowledgedocument_bulk_import_job.py
 │   │
 │   ├── documents/                 # documentos pessoais do usuário (não habilitado ainda)
 │   │   ├── models.py              # UserDocument, UserChunk
@@ -106,6 +112,7 @@ django_rag/
 │   ├── css/   (bootstrap.min.css)
 │   └── js/    (bootstrap.bundle.min.js)
 │
+├── conftest.py                    # verifica pré-carregamento do torch para testes slow
 ├── .env
 ├── .env.example
 ├── docker-compose-infra.yml       # serviços de infra (db, redis, keycloak, redis-commander)
@@ -136,11 +143,27 @@ KnowledgeDocument
 ├── collection          ForeignKey → KnowledgeCollection (CASCADE)
 ├── title               CharField
 ├── file_path           CharField
-├── file_type           CharField  (pdf, docx, txt, md)
+├── file_type           CharField  (pdf · docx · txt · md)
 ├── status              CharField  (pending · indexing · ready · error)
 ├── chunks_count        IntegerField
 ├── error_message       TextField
-├── ingested_by         ForeignKey → CustomUser
+├── ingested_by         ForeignKey → CustomUser (SET_NULL)
+├── bulk_import_job     ForeignKey → BulkImportJob (SET_NULL, nullable)  ← NULL para uploads manuais
+└── (TimeStampedModel)
+
+BulkImportJob                      ← rastreia importações em lote via diretório
+├── id                  UUIDField PK
+├── collection          ForeignKey → KnowledgeCollection (CASCADE)
+├── source_directory    CharField  ← caminho absoluto no servidor
+├── recursive           BooleanField (default True)
+├── file_extensions     JSONField  ← lista de extensões aceitas; vazio = todas
+├── status              CharField  (pending · running · completed · completed_with_errors · failed)
+├── total_files         IntegerField
+├── indexed_files       IntegerField
+├── failed_files        IntegerField
+├── error_message       TextField
+├── celery_task_id      CharField  ← ID da task run_bulk_import
+├── triggered_by        ForeignKey → CustomUser (SET_NULL)
 └── (TimeStampedModel)
 
 KnowledgeChunk                     ← tabela de vetores pgvector
@@ -332,6 +355,11 @@ LOGIN_URL           = "/rag/oidc/authenticate/"
 
 ## 05 · Tasks Assíncronas (Celery + Redis)
 
+As tasks estão divididas em dois módulos:
+
+- `apps/core/tasks.py` — `index_document`, `delete_document`, `reindex_document`
+- `apps/knowledge/tasks.py` — `run_bulk_import` (importação em lote via BulkImportJob)
+
 ### `index_document(doc_id, doc_type)`
 ```
 1. busca KnowledgeDocument ou UserDocument pelo doc_id
@@ -365,6 +393,36 @@ LOGIN_URL           = "/rag/oidc/authenticate/"
 2. encadeia index_document.si(doc_id, doc_type)
    via Celery chain
 ```
+
+### `run_bulk_import(job_id)` — `apps/knowledge/tasks.py`
+```
+1. carrega BulkImportJob pelo job_id → status: "running"
+2. valida source_directory (existe e é diretório acessível)
+3. varre o diretório (glob recursivo ou não, conforme job.recursive)
+   filtra por extensões aceitas (pdf, docx, txt, md)
+4. para cada arquivo:
+   ├── KnowledgeDocument.objects.create(bulk_import_job=job, ...)
+   └── index_document.delay(doc.id, "knowledge")
+5. atualiza contadores (indexed_files, failed_files) a cada 10 arquivos
+6. status final: "completed" ou "completed_with_errors"
+   (em caso de erro fatal antes da varredura: "failed")
+```
+
+O job pode ser disparado por:
+- **API**: `POST /api/knowledge/collections/<id>/bulk-import/`
+- **CLI**: `python manage.py bulk_ingest_knowledge <collection_id> <directory> [--options]`
+
+Opções do management command:
+
+| Flag | Descrição |
+|---|---|
+| `--extensions pdf docx` | Filtra extensões aceitas |
+| `--no-recursive` | Não percorre subdiretórios |
+| `--skip-existing` | Ignora arquivos já presentes na coleção |
+| `--dry-run` | Lista o que seria importado sem criar nada |
+| `--sync` | Indexação síncrona (sem Celery — útil para debug) |
+| `--batch-size N` | Documentos por transação (padrão: 100) |
+| `--user USERNAME` | Registra `triggered_by` no job |
 
 ---
 
@@ -612,12 +670,14 @@ Todas as rotas são prefixadas em `/rag/`. A raiz `/` redireciona para `/rag/`.
 /rag/__debug__/            →  Django Debug Toolbar (apenas DEBUG=True)
 
 # API de Conhecimento
-/rag/api/knowledge/collections/                  →  GET lista coleções acessíveis · POST cria coleção (staff)
-/rag/api/knowledge/collections/<id>/             →  GET detalhe da coleção
-/rag/api/knowledge/collections/<id>/documents/   →  GET lista docs · POST upload + indexação (staff)
-/rag/api/knowledge/documents/<id>/               →  GET detalhe do documento
-/rag/api/knowledge/documents/<id>/               →  DELETE remove doc e chunks (staff)
-/rag/api/knowledge/documents/<id>/reindex/       →  POST re-indexa o documento (staff/admin)
+/rag/api/knowledge/collections/                              →  GET lista coleções acessíveis · POST cria coleção (staff)
+/rag/api/knowledge/collections/<id>/                         →  GET detalhe da coleção
+/rag/api/knowledge/collections/<id>/documents/               →  GET lista docs · POST upload + indexação (staff)
+/rag/api/knowledge/collections/<id>/bulk-import/             →  GET lista BulkImportJobs · POST dispara job (admin)
+/rag/api/knowledge/collections/<id>/bulk-import/<job_id>/    →  GET detalhe de um BulkImportJob (admin)
+/rag/api/knowledge/documents/<id>/                           →  GET detalhe do documento
+/rag/api/knowledge/documents/<id>/                           →  DELETE remove doc e chunks (staff)
+/rag/api/knowledge/documents/<id>/reindex/                   →  POST re-indexa o documento (admin)
 ```
 
 ### Controle de acesso na API de Conhecimento
@@ -628,7 +688,8 @@ Todas as rotas são prefixadas em `/rag/`. A raiz `/` redireciona para `/rag/`.
 | Criar coleção | `is_staff = True` |
 | Upload de documento | `is_staff = True` |
 | Remover documento | `is_staff = True` |
-| Re-indexar documento | `is_staff = True` (admin) |
+| Re-indexar documento | `is_superuser` (`IsAdminUser`) |
+| Bulk import (listar / criar / ver job) | `is_superuser` (`IsAdminUser`) |
 
 > Coleções sem `allowed_groups` são públicas — qualquer usuário autenticado tem acesso. Superusuários acessam tudo.
 
@@ -801,29 +862,61 @@ uv run pytest apps/core/tests.py
 
 Cobertura por app:
 
-| App | Arquivo | Testes | Cobertura |
-|---|---|---|---|
-| `apps.core` | `apps/core/tests.py` | — | — |
-| `apps.accounts` | `apps/accounts/tests.py` | — | — |
-| `apps.knowledge` | `apps/knowledge/tests.py` | **84** | permissions, upload, CRUD, reindex, acesso por grupo |
+| App | Arquivo | Testes |
+|---|---|---|
+| `apps.core` | `apps/core/tests.py` | **54** |
+| `apps.accounts` | `apps/accounts/tests.py` | **13** |
+| `apps.knowledge` | `apps/knowledge/tests.py` | **156** |
 
-### Testes da app knowledge
+### Testes da app core (54 testes · 8 classes)
 
-Organização dos 84 testes em 11 classes:
+| Classe | O que testa |
+|---|---|
+| `TestExceptionHierarchy` | hierarquia EmbeddingError / LLMError / RAGError |
+| `TestTimeStampedModel` | campos created_at / updated_at |
+| `TestExtractTextTxt` | extração de texto de arquivos .txt |
+| `TestTextUtils` | utilitários de texto |
+| `TestPrivacyFilter` | mascaramento PII/LGPD com Presidio |
+| `TestReranker` | CrossEncoder reranker |
+| `TestEmbeddings` | geração de embeddings com sentence-transformers |
+| `TestRAGServiceBuildContext` | montagem do contexto RAG |
+
+### Testes da app accounts (13 testes · 4 classes)
+
+| Classe | O que testa |
+|---|---|
+| `TestCustomUserModel` | campo `sub`, herança AbstractUser |
+| `TestCustomUserCreationForm` | formulário de criação de usuário |
+| `TestCustomUserChangeForm` | formulário de edição de usuário |
+| `TestCustomUserAdmin` | interface admin do CustomUser |
+
+### Testes da app knowledge (156 testes · 23 classes)
 
 | Classe | O que testa |
 |---|---|
 | `TestKnowledgeCollectionModel` | `is_accessible_by()` — público, restrito por grupo, inativo |
 | `TestKnowledgeDocumentModel` | `trigger_indexing()`, `trigger_reindex()` via mock Celery |
 | `TestKnowledgeChunkModel` | criação de chunk com embedding de dimensão correta |
+| `TestBulkImportJobModel` | propriedades `is_done`, `progress_pct` |
+| `TestKnowledgeCollectionSerializer` | serialização de coleção |
+| `TestKnowledgeDocumentSerializer` | serialização de documento |
+| `TestKnowledgeDocumentUploadSerializer` | validação de upload (tipo, tamanho) |
+| `TestBulkImportJobSerializer` | serialização de job |
+| `TestBulkImportJobCreateSerializer` | validação do payload de criação de job |
 | `TestIsStaffOrReadOnly` | permissão customizada — GET vs POST para staff/não-staff |
-| `TestCollectionListCreate` | GET lista, POST cria (staff), filtragem por grupo, 401 anônimo |
-| `TestCollectionRetrieve` | detalhe de coleção — acesso/restrição por grupo |
-| `TestCollectionDocuments` | GET lista docs da coleção, filtro por status |
-| `TestDocumentUpload` | POST upload — tipos válidos/inválidos, tamanho, 400/201 |
-| `TestDocumentRetrieve` | GET detalhe do documento — acesso/restrição |
-| `TestDocumentDelete` | DELETE — staff vs não-staff, fallback sem Celery |
-| `TestDocumentReindex` | POST reindex — staff vs não-staff, doc já em indexação (409) |
+| `TestCollectionListAPI` | GET lista, filtragem por grupo, 401 anônimo |
+| `TestCollectionRetrieveAPI` | detalhe de coleção — acesso/restrição por grupo |
+| `TestCollectionCreateAPI` | POST cria coleção (staff) |
+| `TestCollectionDocumentsListAPI` | GET lista docs da coleção, filtro por status |
+| `TestCollectionDocumentsUploadAPI` | POST upload — tipos válidos/inválidos, 400/201 |
+| `TestBulkImportListAPI` | GET lista BulkImportJobs (admin) |
+| `TestBulkImportCreateAPI` | POST cria job — body válido/inválido, 202 |
+| `TestBulkImportDetailAPI` | GET detalhe de job específico |
+| `TestDocumentRetrieveAPI` | GET detalhe do documento — acesso/restrição |
+| `TestDocumentDestroyAPI` | DELETE — staff vs não-staff, fallback sem Celery |
+| `TestDocumentReindexAPI` | POST reindex — admin vs não-admin, doc em indexação (409) |
+| `TestRunBulkImportTask` | task `run_bulk_import` — varredura, contadores, status final |
+| `TestBulkIngestCommand` | management command `bulk_ingest_knowledge` — flags, dry-run, skip-existing |
 
 > Celery é mockado via `@patch("apps.core.tasks.index_document.delay")` — testes não precisam de Redis.
 > Uploads usam `django.test.SimpleUploadedFile` — não requerem disco real.
