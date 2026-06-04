@@ -3,11 +3,13 @@ URLs da app knowledge.
 
 Roteamento via DefaultRouter do DRF:
 
-    /api/knowledge/collections/                  GET, POST
-    /api/knowledge/collections/<id>/             GET
-    /api/knowledge/collections/<id>/documents/   GET, POST
-    /api/knowledge/documents/<id>/               GET, DELETE
-    /api/knowledge/documents/<id>/reindex/       POST
+    /api/knowledge/collections/                              GET, POST
+    /api/knowledge/collections/<id>/                         GET
+    /api/knowledge/collections/<id>/documents/               GET, POST
+    /api/knowledge/collections/<id>/bulk-import/             GET, POST  (staff only)
+    /api/knowledge/collections/<id>/bulk-import/<job_id>/    GET        (staff only)
+    /api/knowledge/documents/<id>/                           GET, DELETE
+    /api/knowledge/documents/<id>/reindex/                   POST
 """
 
 from django.urls import include, path
