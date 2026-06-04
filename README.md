@@ -2,7 +2,7 @@
 
 Chat com LLM e RAG sobre base de conhecimento institucional e documentos pessoais.
 
-**Stack principal:** Django 6 · PostgreSQL 16 + pgvector · Redis 7 · Keycloak 24 · Ollama · Celery · sentence-transformers · Presidio
+**Stack principal:** Django 6 · PostgreSQL 16 + pgvector · Redis 7 · Keycloak 24 · Ollama · Celery · sentence-transformers · PyTorch (CPU) · Presidio
 
 ---
 
@@ -72,6 +72,27 @@ uv sync --group dev
 ```
 
 Isso cria o ambiente virtual em `.venv` e instala todas as dependências de produção e desenvolvimento.
+
+Em seguida, instale o PyTorch CPU (requerido pelo sentence-transformers e Presidio):
+
+```bash
+uv add "torch==2.11.0+cpu" --index https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+```
+
+> **Windows — conflito de DLLs:** o PyTorch precisa ser carregado antes de outros pacotes que registram DLLs conflitantes (psycopg, LangChain, etc.). Crie o arquivo abaixo para garantir isso:
+>
+> ```python
+> # .venv\Lib\site-packages\sitecustomize.py
+> import os
+> os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+> os.environ.setdefault("OMP_NUM_THREADS", "1")
+> try:
+>     import torch  # noqa: F401
+> except Exception:
+>     pass
+> ```
+>
+> Sem esse arquivo, testes com modelos de ML (`@pytest.mark.slow`) falham com `[WinError 1114]`. No Linux/macOS esse passo não é necessário.
 
 ### 6. Configurar o Keycloak automaticamente
 
@@ -234,19 +255,31 @@ Coleções sem grupos em `allowed_groups` são **públicas** (qualquer autentica
 
 ## Testes
 
+A suíte tem 223 testes divididos em dois grupos:
+
+| Grupo | Marcação | O que cobre |
+|---|---|---|
+| Rápidos | _(sem marcação)_ | Unitários e de integração com mocks |
+| Lentos | `@pytest.mark.slow` | Carregam modelos reais (sentence-transformers, CrossEncoder, Presidio + spaCy) |
+
 ```bash
-# Todos os testes
-uv run pytest
+# Todos os testes (223)
+.venv\Scripts\python.exe -m pytest -v
 
-# Apenas a app knowledge (84 testes)
-uv run pytest apps/knowledge/tests.py -v
+# Pular testes lentos — execução rápida para CI
+.venv\Scripts\python.exe -m pytest -m "not slow" -v
 
-# Pular testes lentos (carregam modelos de ML)
-uv run pytest -m "not slow"
+# Apenas testes lentos
+.venv\Scripts\python.exe -m pytest -m slow -v
+
+# Apenas uma app
+.venv\Scripts\python.exe -m pytest apps/knowledge/tests.py -v
 
 # Com relatório de cobertura
-uv run pytest --cov=apps
+.venv\Scripts\python.exe -m pytest --cov=apps
 ```
+
+> **Windows:** use `.venv\Scripts\python.exe -m pytest` em vez de `uv run pytest`. O `uv run` lança o processo com PATH diferente, causando falha no carregamento das DLLs do PyTorch (`[WinError 1114]`). Veja o passo 5 para o pré-requisito do `sitecustomize.py`.
 
 ---
 
