@@ -249,7 +249,7 @@ class BulkImportJob(TimeStampedModel):
         verbose_name_plural = "jobs de importacao em lote"
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["collection", "status"], name="knowledge_bulkjob_coll_status_idx"),
+            models.Index(fields=["collection", "status"], name="kb_bulkjob_coll_status_idx"),
         ]
         db_table_comment = (
             "Jobs de carga em lote de documentos a partir de um diretorio no disco. "

@@ -26,6 +26,8 @@ class CustomUserChangeForm(UserChangeForm):
         model = CustomUser
         fields = (
             "username",
+            "password",
+            "usable_password",
             "email",
             "first_name",
             "last_name",

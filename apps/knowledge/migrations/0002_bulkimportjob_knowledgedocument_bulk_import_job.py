@@ -198,7 +198,7 @@ class Migration(migrations.Migration):
             model_name="bulkimportjob",
             index=models.Index(
                 fields=["collection", "status"],
-                name="knowledge_bulkjob_coll_status_idx",
+                name="kb_bulkjob_coll_status_idx",
             ),
         ),
 
