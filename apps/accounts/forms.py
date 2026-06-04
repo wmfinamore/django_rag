@@ -6,15 +6,19 @@ no admin. Quando o CustomUser estiver ativo, os forms built-in (que apontam
 para auth.User) não podem mais ser usados.
 """
 
-from django.contrib.auth.forms import UserChangeForm, UserCreationForm
+from django.contrib.auth.forms import AdminUserCreationForm, UserChangeForm
 
 from apps.accounts.models import CustomUser
 
 
-class CustomUserCreationForm(UserCreationForm):
-    """Form de criação de usuário (admin)."""
+class CustomUserCreationForm(AdminUserCreationForm):
+    """Form de criação de usuário (admin).
 
-    class Meta(UserCreationForm.Meta):
+    Herda de AdminUserCreationForm (e não de UserCreationForm) para preservar
+    o campo ``usable_password`` exigido pelo add_fieldsets do UserAdmin.
+    """
+
+    class Meta(AdminUserCreationForm.Meta):
         model = CustomUser
         fields = ("username", "email")
 
@@ -27,7 +31,6 @@ class CustomUserChangeForm(UserChangeForm):
         fields = (
             "username",
             "password",
-            "usable_password",
             "email",
             "first_name",
             "last_name",
