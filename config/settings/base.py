@@ -57,8 +57,7 @@ LOCAL_APPS = [
     "apps.accounts",
     "apps.knowledge",
     "apps.documents",
-    # Habilitados quando as apps forem implementadas:
-    #"apps.chat",
+    "apps.chat",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -242,11 +241,11 @@ USE_TZ = True
 # Arquivos estáticos e de mídia
 # ---------------------------------------------------------------------------
 
-STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [BASE_DIR / "static"]
+STATIC_URL = "rag/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles_root"   # destino do collectstatic (producao)
+STATICFILES_DIRS = [BASE_DIR / "staticfiles"]  # arquivos fonte (desenvolvimento)
 
-MEDIA_URL = "media/"
+MEDIA_URL = "rag/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # ---------------------------------------------------------------------------

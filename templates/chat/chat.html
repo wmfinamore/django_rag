@@ -1,0 +1,480 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Chat — Django RAG{% endblock %}
+
+{# Layout full-height: sem container, sem footer #}
+{% block main_class %}flex-grow-1 overflow-hidden p-0{% endblock %}
+{% block footer %}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ---- Layout ---- */
+#chat-layout { height: 100%; }
+
+/* ---- Sidebar ---- */
+.chat-sidebar {
+  width: 260px; min-width: 260px;
+  background: #1a1d20;
+  color: #fff;
+}
+.conv-item { transition: background .15s; }
+.conv-item:hover { background: rgba(255,255,255,.07); }
+.conv-item:hover .conv-delete-btn { opacity: 1 !important; }
+.conv-item-active { background: rgba(13,110,253,.25) !important; }
+.conv-item-active:hover { background: rgba(13,110,253,.35) !important; }
+
+/* ---- Mensagens ---- */
+.message-bubble { max-width: 78%; word-break: break-word; }
+.message-bubble-user {
+  background: #0d6efd; color: #fff;
+  border-bottom-right-radius: 4px !important;
+}
+.message-bubble-ai {
+  background: #f1f3f5; color: #212529;
+  border-bottom-left-radius: 4px !important;
+}
+.message-bubble-ai .msg-rendered p:last-child { margin-bottom: 0; }
+.message-bubble-ai pre {
+  background: #e9ecef; border-radius: 4px;
+  padding: .5rem .75rem; font-size: .8rem;
+  overflow-x: auto;
+}
+.message-bubble-ai code { font-size: .82rem; }
+.avatar-ai {
+  width: 28px; height: 28px;
+  background: #0d6efd; color: #fff;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .65rem; font-weight: 700;
+  margin-top: 4px;
+}
+
+/* ---- Typing indicator ---- */
+.typing-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  background: #868e96; border-radius: 50%;
+  margin: 0 2px;
+  animation: typing-bounce .9s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: .2s; }
+.typing-dot:nth-child(3) { animation-delay: .4s; }
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-6px); }
+}
+
+/* ---- Scrollbar fino no sidebar ---- */
+#conv-list::-webkit-scrollbar { width: 4px; }
+#conv-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 2px; }
+
+/* ---- Messages container scrollbar ---- */
+#messages-container::-webkit-scrollbar { width: 5px; }
+#messages-container::-webkit-scrollbar-thumb { background: #dee2e6; border-radius: 3px; }
+
+/* ---- Responsivo: sidebar colapsavel em telas pequenas ---- */
+@media (max-width: 768px) {
+  .chat-sidebar {
+    width: 0; min-width: 0;
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 1040;
+    transition: width .25s;
+    overflow: hidden;
+  }
+  .chat-sidebar.sidebar-open {
+    width: 260px; min-width: 260px;
+  }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex h-100" id="chat-layout">
+
+  {# ====================== SIDEBAR ====================== #}
+  <div class="chat-sidebar d-flex flex-column flex-shrink-0" id="chat-sidebar">
+
+    {# Botao nova conversa #}
+    <div class="p-2 border-bottom border-secondary">
+      <button class="btn btn-primary btn-sm w-100"
+              data-bs-toggle="modal" data-bs-target="#modal-new-conv">
+        + Nova Conversa
+      </button>
+    </div>
+
+    {# Lista de conversas (HTMX) #}
+    <div class="flex-grow-1 overflow-y-auto py-1" id="conv-list"
+         hx-get="{% url 'chat:hx-conv-list' %}"
+         hx-trigger="load">
+      <div class="text-center text-secondary small py-4">Carregando...</div>
+    </div>
+
+    {# Rodape do sidebar #}
+    <div class="p-2 border-top border-secondary">
+      <a href="{% url 'home' %}" class="btn btn-outline-secondary btn-sm w-100 text-white-50">
+        &#8592; Inicio
+      </a>
+    </div>
+  </div>
+
+  {# ====================== AREA PRINCIPAL ====================== #}
+  <div class="flex-grow-1 d-flex flex-column overflow-hidden bg-white" id="chat-main">
+    {% include "chat/partials/_empty_state.html" %}
+  </div>
+
+</div>{# fim #chat-layout #}
+
+{# =============== MODAL: NOVA CONVERSA =============== #}
+<div class="modal fade" id="modal-new-conv" tabindex="-1" aria-labelledby="modal-new-conv-label">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form id="new-conv-form"
+            hx-post="{% url 'chat:hx-conv-create' %}"
+            hx-target="#chat-main"
+            hx-swap="innerHTML">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h5 class="modal-title" id="modal-new-conv-label">Nova Conversa</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+
+          {# Titulo #}
+          <div class="mb-3">
+            <label for="conv-title-input" class="form-label fw-semibold">
+              Titulo <span class="text-muted fw-normal">(opcional)</span>
+            </label>
+            <input type="text" id="conv-title-input" name="title"
+                   class="form-control" placeholder="Nova conversa" maxlength="255">
+          </div>
+
+          {# Colecoes #}
+          {% if collections %}
+          <div class="mb-3">
+            <label class="form-label fw-semibold">
+              Colecoes de conhecimento
+              <span class="text-muted fw-normal small">(selecione as que quer incluir)</span>
+            </label>
+            <div class="border rounded p-2" style="max-height:180px;overflow-y:auto;">
+              {% for col in collections %}
+              <div class="form-check mb-1">
+                <input class="form-check-input" type="checkbox"
+                       name="collection_ids" value="{{ col.id }}"
+                       id="col-{{ col.id }}">
+                <label class="form-check-label small" for="col-{{ col.id }}">
+                  <span class="fw-medium">{{ col.name }}</span>
+                  {% if col.description %}
+                    <span class="text-muted d-block" style="font-size:.75rem;">
+                      {{ col.description|truncatechars:70 }}
+                    </span>
+                  {% endif %}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# Docs pessoais #}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox"
+                   name="use_personal_docs" id="use-personal-docs">
+            <label class="form-check-label small" for="use-personal-docs">
+              Incluir meus documentos pessoais na busca
+            </label>
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Criar Conversa</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+{# HTMX e marked.js via CDN (substitua por arquivos locais em producao) #}
+{# HTMX — arquivo local (execute docker/download_frontend_deps.py para baixar) #}
+<script src="{% static 'js/htmx.min.js' %}"
+        onerror="this.onerror=null;this.src='https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js'"></script>
+{# marked.js — renderizacao de markdown nas respostas do assistente #}
+<script src="{% static 'js/marked.min.js' %}"
+        onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/marked@12/marked.min.js'"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  // ----------------------------------------------------------------
+  // Utilitarios
+  // ----------------------------------------------------------------
+  function esc(str) {
+    return String(str)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  function scrollToBottom() {
+    var c = document.getElementById("messages-container");
+    if (c) c.scrollTop = c.scrollHeight;
+  }
+
+  function setInputState(enabled) {
+    var inp = document.getElementById("chat-input");
+    var btn = document.getElementById("send-btn");
+    var ind = document.getElementById("streaming-indicator");
+    if (inp) inp.disabled = !enabled;
+    if (btn) btn.disabled = !enabled;
+    if (ind) ind.classList.toggle("d-none", enabled);
+  }
+
+  function setConnStatus(state) {
+    var el = document.getElementById("conn-status");
+    if (!el) return;
+    var map = {
+      connecting: ["bg-warning text-dark", "Conectando..."],
+      connected:  ["bg-success",           "Conectado"],
+      disconnected: ["bg-secondary",        "Desconectado"],
+      error:      ["bg-danger",            "Erro"]
+    };
+    var info = map[state] || map.disconnected;
+    el.className = "badge " + info[0];
+    el.textContent = info[1];
+  }
+
+  // ----------------------------------------------------------------
+  // ChatApp
+  // ----------------------------------------------------------------
+  var ChatApp = {
+    ws: null,
+    convId: null,
+    currentBubble: null,
+    rawBuffer: "",
+
+    connect: function (id) {
+      this.convId = id;
+      if (this.ws) { this.ws.close(); this.ws = null; }
+      setConnStatus("connecting");
+      setInputState(false);
+
+      var proto = location.protocol === "https:" ? "wss:" : "ws:";
+      var self = this;
+      this.ws = new WebSocket(proto + "//" + location.host + "/ws/chat/" + id + "/");
+
+      this.ws.onopen = function () {
+        setConnStatus("connected");
+        setInputState(true);
+        // Foco no input
+        var inp = document.getElementById("chat-input");
+        if (inp) inp.focus();
+      };
+
+      this.ws.onmessage = function (e) {
+        var data = JSON.parse(e.data);
+        if (data.type === "token") {
+          self._appendToken(data.token);
+        } else if (data.type === "done") {
+          self._finalize(data.sources);
+        } else if (data.type === "error") {
+          self._showError(data.error);
+        }
+      };
+
+      this.ws.onerror = function () { setConnStatus("error"); };
+      this.ws.onclose = function () {
+        setConnStatus("disconnected");
+        setInputState(false);
+        self.ws = null;
+      };
+    },
+
+    disconnect: function () {
+      if (this.ws) { this.ws.close(); this.ws = null; }
+      this.currentBubble = null;
+      this.rawBuffer = "";
+    },
+
+    send: function (text) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !text.trim()) return;
+      this._addUserBubble(text);
+      this.currentBubble = this._createAssistantBubble();
+      this.rawBuffer = "";
+      setInputState(false);
+      this.ws.send(JSON.stringify({ message: text }));
+    },
+
+    // -- privados --
+
+    _addUserBubble: function (text) {
+      var hint = document.getElementById("empty-messages-hint");
+      if (hint) hint.remove();
+      var c = document.getElementById("messages-container");
+      var el = document.createElement("div");
+      el.className = "message message-user mb-3 d-flex justify-content-end";
+      el.innerHTML =
+        '<div class="message-bubble message-bubble-user px-3 py-2 rounded-3">' +
+        esc(text).replace(/\n/g, "<br>") +
+        "</div>";
+      c.appendChild(el);
+      scrollToBottom();
+    },
+
+    _createAssistantBubble: function () {
+      var ind = document.getElementById("streaming-indicator");
+      if (ind) ind.classList.remove("d-none");
+      var c = document.getElementById("messages-container");
+      var el = document.createElement("div");
+      el.className = "message message-assistant mb-3 d-flex gap-2 align-items-start";
+      el.innerHTML =
+        '<div class="avatar-ai flex-shrink-0">AI</div>' +
+        '<div class="message-bubble message-bubble-ai px-3 py-2 rounded-3 flex-grow-1">' +
+        '  <div class="msg-rendered"></div>' +
+        '  <div class="msg-sources mt-2 d-none"></div>' +
+        "</div>";
+      c.appendChild(el);
+      scrollToBottom();
+      return el;
+    },
+
+    _appendToken: function (token) {
+      if (!this.currentBubble) this.currentBubble = this._createAssistantBubble();
+      this.rawBuffer += token;
+      this.currentBubble.querySelector(".msg-rendered").innerHTML =
+        marked.parse(this.rawBuffer);
+      scrollToBottom();
+    },
+
+    _finalize: function (sources) {
+      var ind = document.getElementById("streaming-indicator");
+      if (ind) ind.classList.add("d-none");
+      if (this.currentBubble) {
+        // render final
+        this.currentBubble.querySelector(".msg-rendered").innerHTML =
+          marked.parse(this.rawBuffer);
+        // sources
+        if (sources && sources.length) {
+          var srcEl = this.currentBubble.querySelector(".msg-sources");
+          srcEl.classList.remove("d-none");
+          var html = '<small class="text-muted">Fontes: </small>';
+          sources.forEach(function (s) {
+            html += '<span class="badge bg-secondary me-1" title="' + esc(s.id) + '">' +
+              (s.type === "personal" ? "&#x1F4C4;" : "&#x1F4DA;") + " " +
+              esc(s.title) + "</span>";
+          });
+          srcEl.innerHTML = html;
+        }
+      }
+      this.currentBubble = null;
+      this.rawBuffer = "";
+      setInputState(true);
+      scrollToBottom();
+      var inp = document.getElementById("chat-input");
+      if (inp) inp.focus();
+    },
+
+    _showError: function (msg) {
+      var ind = document.getElementById("streaming-indicator");
+      if (ind) ind.classList.add("d-none");
+      if (this.currentBubble) {
+        this.currentBubble.remove();
+        this.currentBubble = null;
+      }
+      var c = document.getElementById("messages-container");
+      var el = document.createElement("div");
+      el.className = "alert alert-danger py-2 small mt-2";
+      el.textContent = "Erro: " + msg;
+      c.appendChild(el);
+      setInputState(true);
+      scrollToBottom();
+    }
+  };
+
+  // ----------------------------------------------------------------
+  // HTMX: detecta quando uma conversa e carregada no #chat-main
+  // ----------------------------------------------------------------
+  document.addEventListener("htmx:afterSettle", function (e) {
+    // Scroll to bottom das mensagens
+    scrollToBottom();
+
+    // Inicializa WebSocket se o marcador ws-init estiver presente
+    var marker = document.getElementById("ws-init");
+    if (marker) {
+      ChatApp.connect(marker.dataset.convId);
+    }
+  });
+
+  // Desconecta WS antes de trocar de conversa
+  document.addEventListener("htmx:beforeRequest", function (e) {
+    if (e.detail.target && e.detail.target.id === "chat-main") {
+      ChatApp.disconnect();
+    }
+  });
+
+  // Fecha o modal apos criar conversa com sucesso
+  document.addEventListener("htmx:afterRequest", function (e) {
+    if (e.detail.elt && e.detail.elt.id === "new-conv-form" && e.detail.successful) {
+      var modal = bootstrap.Modal.getInstance(document.getElementById("modal-new-conv"));
+      if (modal) modal.hide();
+      // Limpa o formulario
+      document.getElementById("new-conv-form").reset();
+    }
+  });
+
+  // Adiciona token CSRF em requests HTMX
+  document.addEventListener("htmx:configRequest", function (e) {
+    var token = (document.cookie.split(";")
+      .find(function (c) { return c.trim().startsWith("csrftoken="); }) || "")
+      .split("=")[1];
+    if (token) e.detail.headers["X-CSRFToken"] = token;
+  });
+
+  // ----------------------------------------------------------------
+  // Envio de mensagem via formulario
+  // ----------------------------------------------------------------
+  document.addEventListener("submit", function (e) {
+    if (e.target.id === "chat-form") {
+      e.preventDefault();
+      var inp = document.getElementById("chat-input");
+      var text = inp.value.trim();
+      if (text) {
+        ChatApp.send(text);
+        inp.value = "";
+        inp.style.height = "auto";
+      }
+    }
+  });
+
+  // Enter envia; Shift+Enter quebra linha
+  document.addEventListener("keydown", function (e) {
+    if (e.target.id === "chat-input" && e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      var btn = document.getElementById("send-btn");
+      if (btn && !btn.disabled) btn.click();
+    }
+  });
+
+  // Auto-resize do textarea
+  document.addEventListener("input", function (e) {
+    if (e.target.id === "chat-input") {
+      e.target.style.height = "auto";
+      e.target.style.height = Math.min(e.target.scrollHeight, 150) + "px";
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // Toggle sidebar em mobile
+  // ----------------------------------------------------------------
+  document.addEventListener("click", function (e) {
+    if (e.target.id === "sidebar-toggle") {
+      var sb = document.getElementById("chat-sidebar");
+      if (sb) sb.classList.toggle("sidebar-open");
+    }
+  });
+
+}());
+</script>
+{% endblock %}

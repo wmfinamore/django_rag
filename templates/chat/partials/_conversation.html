@@ -1,0 +1,139 @@
+{# Marcador lido pelo JS para inicializar o WebSocket #}
+<div id="ws-init" data-conv-id="{{ conversation.id }}" class="d-none"></div>
+
+{# Header da conversa #}
+<div class="border-bottom px-4 py-2 d-flex align-items-center gap-3 bg-white flex-shrink-0">
+  <div class="flex-grow-1">
+    <span class="fw-semibold" id="conv-title-display">{{ conversation.title }}</span>
+    {% if conversation.collections.all %}
+      <div class="d-flex flex-wrap gap-1 mt-1">
+        {% for col in conversation.collections.all %}
+          <span class="badge bg-primary-subtle text-primary-emphasis" style="font-size:.65rem;">
+            &#x1F4DA; {{ col.name }}
+          </span>
+        {% endfor %}
+        {% if conversation.use_personal_docs %}
+          <span class="badge bg-secondary-subtle text-secondary-emphasis" style="font-size:.65rem;">
+            &#x1F4C4; Docs pessoais
+          </span>
+        {% endif %}
+      </div>
+    {% elif conversation.use_personal_docs %}
+      <div class="mt-1">
+        <span class="badge bg-secondary-subtle text-secondary-emphasis" style="font-size:.65rem;">
+          &#x1F4C4; Docs pessoais
+        </span>
+      </div>
+    {% endif %}
+  </div>
+
+  {# Status da conexao WS #}
+  <div>
+    <span id="conn-status" class="badge bg-secondary">Conectando...</span>
+  </div>
+
+  {# Menu de opcoes #}
+  <div class="dropdown">
+    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+      &#8942;
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end">
+      <li>
+        <button class="dropdown-item small"
+                onclick="document.getElementById('rename-form-{{ conversation.id }}').classList.toggle('d-none')">
+          &#x270F;&#xFE0F; Renomear
+        </button>
+      </li>
+      <li><hr class="dropdown-divider"></li>
+      <li>
+        <button class="dropdown-item text-danger small"
+                hx-post="{% url 'chat:hx-conv-delete' pk=conversation.id %}"
+                hx-target="#chat-main"
+                hx-swap="innerHTML"
+                hx-confirm="Excluir esta conversa?">
+          &#x1F5D1;&#xFE0F; Excluir conversa
+        </button>
+      </li>
+    </ul>
+  </div>
+</div>
+
+{# Inline rename form (oculto por padrao) #}
+<form id="rename-form-{{ conversation.id }}"
+      class="d-none px-4 py-2 bg-light border-bottom d-flex gap-2"
+      hx-post="{% url 'chat:hx-conv-rename' pk=conversation.id %}?active={{ conversation.id }}"
+      hx-target="#conv-list"
+      hx-swap="innerHTML"
+      hx-on::after-request="this.classList.add('d-none')">
+  {% csrf_token %}
+  <input type="text" name="title" class="form-control form-control-sm"
+         value="{{ conversation.title }}" maxlength="255" required>
+  <button type="submit" class="btn btn-sm btn-primary px-3">Salvar</button>
+  <button type="button" class="btn btn-sm btn-outline-secondary"
+          onclick="this.closest('form').classList.add('d-none')">Cancelar</button>
+</form>
+
+{# Area de mensagens #}
+<div class="flex-grow-1 overflow-y-auto px-4 py-3" id="messages-container">
+  {% for msg in messages %}
+    {% if msg.role == 'user' %}
+      <div class="message message-user mb-3 d-flex justify-content-end">
+        <div class="message-bubble message-bubble-user px-3 py-2 rounded-3">
+          {{ msg.content|linebreaksbr }}
+        </div>
+      </div>
+    {% else %}
+      <div class="message message-assistant mb-3 d-flex gap-2 align-items-start">
+        <div class="avatar-ai flex-shrink-0">AI</div>
+        <div class="message-bubble message-bubble-ai px-3 py-2 rounded-3 flex-grow-1">
+          <div class="msg-rendered">{{ msg.content }}</div>
+          {% if msg.sources %}
+            <div class="msg-sources mt-2">
+              <small class="text-muted">Fontes: </small>
+              {% for src in msg.sources %}
+                <span class="badge bg-secondary me-1">
+                  {% if src.type == 'personal' %}&#x1F4C4;{% else %}&#x1F4DA;{% endif %}
+                  {{ src.title }}
+                </span>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% empty %}
+    <div class="text-center text-muted small py-5" id="empty-messages-hint">
+      Envie uma mensagem para iniciar a conversa.
+    </div>
+  {% endfor %}
+
+  {# Indicador de streaming #}
+  <div id="streaming-indicator" class="d-none message message-assistant mb-3 d-flex gap-2 align-items-start">
+    <div class="avatar-ai flex-shrink-0">AI</div>
+    <div class="message-bubble message-bubble-ai px-3 py-2 rounded-3">
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+    </div>
+  </div>
+</div>
+
+{# Input area #}
+<div class="border-top bg-white px-4 py-3 flex-shrink-0">
+  <form id="chat-form" autocomplete="off">
+    {% csrf_token %}
+    <div class="d-flex gap-2 align-items-end">
+      <textarea id="chat-input"
+                class="form-control"
+                placeholder="Digite sua mensagem... (Enter para enviar, Shift+Enter para nova linha)"
+                rows="1"
+                disabled
+                style="resize:none; max-height:150px; overflow-y:auto;"></textarea>
+      <button id="send-btn" type="submit" class="btn btn-primary px-3 flex-shrink-0" disabled>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path d="M15.964.686a.5.5 0 0 0-.65-.65L.767 5.855H.766l-.452.18a.5.5 0 0 0-.082.887l.41.26.001.002 4.995 3.178 3.178 4.995.002.002.26.41a.5.5 0 0 0 .886-.083zm-1.833 1.89L6.637 10.07l-.215-.338a.5.5 0 0 0-.154-.154l-.338-.215 7.494-7.494 1.178-.471z"/>
+        </svg>
+      </button>
+    </div>
+  </form>
+</div>

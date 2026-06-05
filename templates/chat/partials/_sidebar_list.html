@@ -1,0 +1,37 @@
+{% if not conversations %}
+  <div class="text-center text-secondary small py-4 px-3">
+    Nenhuma conversa ainda.<br>Clique em <strong>+ Nova</strong> para começar.
+  </div>
+{% else %}
+  {% for conv in conversations %}
+  <div class="conv-item d-flex align-items-center gap-1 px-2 py-1 mx-1 my-1 rounded
+              {% if active_id == conv.id|stringformat:'s' %}conv-item-active{% endif %}"
+       style="cursor:pointer;"
+       hx-get="{% url 'chat:hx-conv-detail' pk=conv.id %}"
+       hx-target="#chat-main"
+       hx-swap="innerHTML"
+       hx-on:click="document.querySelectorAll('.conv-item').forEach(el=>el.classList.remove('conv-item-active'));this.classList.add('conv-item-active')">
+
+    <div class="flex-grow-1 overflow-hidden pe-1">
+      <div class="text-white text-truncate small fw-medium">{{ conv.title }}</div>
+      <div class="text-secondary" style="font-size:.7rem;">
+        {{ conv.updated_at|date:"d/m H:i" }}
+        {% if conv.use_personal_docs %}
+          <span class="badge bg-secondary ms-1" style="font-size:.6rem;">pessoal</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <button class="btn btn-link p-0 text-secondary conv-delete-btn flex-shrink-0"
+            style="font-size:.75rem; opacity:0;"
+            title="Excluir conversa"
+            hx-post="{% url 'chat:hx-conv-delete' pk=conv.id %}"
+            hx-target="#chat-main"
+            hx-swap="innerHTML"
+            hx-confirm="Excluir a conversa &quot;{{ conv.title }}&quot;?"
+            onclick="event.stopPropagation()">
+      &#x2715;
+    </button>
+  </div>
+  {% endfor %}
+{% endif %}
