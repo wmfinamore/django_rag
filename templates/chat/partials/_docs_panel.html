@@ -1,0 +1,49 @@
+<div id="docs-panel">
+
+  {# ── Upload form ── #}
+  <form hx-post="{% url 'chat:hx-doc-upload' %}"
+        hx-target="#docs-panel"
+        hx-swap="outerHTML"
+        enctype="multipart/form-data"
+        class="p-2"
+        style="border-bottom: 1px solid rgba(255,255,255,.12);">
+    {% csrf_token %}
+
+    {% if upload_error %}
+    <div class="alert alert-danger py-1 px-2 mb-2" style="font-size:.72rem;">
+      {{ upload_error }}
+    </div>
+    {% endif %}
+
+    <input type="text" name="title"
+           class="form-control form-control-sm mb-2"
+           style="background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.15);
+                  color:#fff; font-size:.75rem;"
+           placeholder="Título (opcional)" maxlength="300" autocomplete="off">
+
+    <div class="d-flex gap-1 align-items-center">
+      <label class="btn btn-sm flex-grow-1 mb-0 text-truncate text-start"
+             style="background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.15);
+                    color:rgba(255,255,255,.5); font-size:.7rem; cursor:pointer;"
+             for="docs-file-input"
+             id="docs-file-label">
+        Escolher arquivo…
+        <input type="file" id="docs-file-input" name="file"
+               class="d-none" accept=".pdf,.docx,.txt,.md" required>
+      </label>
+      <button type="submit"
+              class="btn btn-primary btn-sm flex-shrink-0"
+              style="font-size:.75rem;" title="Enviar documento">
+        &#8593; Enviar
+      </button>
+    </div>
+
+    <div class="mt-1 text-secondary" style="font-size:.62rem;">
+      PDF · DOCX · TXT · MD &nbsp;·&nbsp; máx. 50 MB
+    </div>
+  </form>
+
+  {# ── Lista de documentos ── #}
+  {% include "chat/partials/_docs_list.html" %}
+
+</div>

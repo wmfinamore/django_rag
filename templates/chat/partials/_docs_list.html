@@ -1,0 +1,67 @@
+<div id="docs-list"
+     {% if has_processing %}
+     hx-get="{% url 'chat:hx-docs-list' %}"
+     hx-trigger="every 4s"
+     hx-swap="outerHTML"
+     {% endif %}>
+  {% if not documents %}
+    <div class="text-center text-secondary small py-3 px-2">
+      Nenhum documento enviado ainda.
+    </div>
+  {% else %}
+    {% for doc in documents %}
+    <div class="d-flex align-items-start gap-2 px-2 py-2"
+         style="border-bottom: 1px solid rgba(255,255,255,.07);">
+
+      {# Título e status #}
+      <div class="flex-grow-1 overflow-hidden">
+        <div class="text-white text-truncate" style="font-size:.75rem; font-weight:500;"
+             title="{{ doc.title }}">{{ doc.title }}</div>
+        <div class="mt-1 d-flex align-items-center gap-1 flex-wrap">
+          {% if doc.status == 'pending' %}
+            <span class="badge bg-secondary" style="font-size:.6rem;">pendente</span>
+          {% elif doc.status == 'indexing' %}
+            <span class="badge bg-warning text-dark" style="font-size:.6rem;">
+              <span class="spinner-border" role="status"
+                    style="width:.55rem;height:.55rem;border-width:1px;"></span>
+              indexando
+            </span>
+          {% elif doc.status == 'ready' %}
+            <span class="badge bg-success" style="font-size:.6rem;">pronto</span>
+            <span class="text-secondary" style="font-size:.6rem;">{{ doc.chunks_count }} chunks</span>
+          {% elif doc.status == 'error' %}
+            <span class="badge bg-danger" style="font-size:.6rem;"
+                  title="{{ doc.error_message }}">erro &#9432;</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {# Ações #}
+      <div class="d-flex flex-column align-items-center gap-1 flex-shrink-0">
+        {% if doc.status != 'indexing' %}
+        <button class="btn btn-link p-0 text-secondary"
+                style="font-size:.75rem; line-height:1;" title="Re-indexar"
+                hx-post="{% url 'chat:hx-doc-reindex' pk=doc.id %}"
+                hx-target="#docs-panel"
+                hx-swap="outerHTML"
+                onclick="event.stopPropagation()">
+          &#8635;
+        </button>
+        <button class="btn btn-link p-0 text-secondary"
+                style="font-size:.75rem; line-height:1;" title="Excluir"
+                hx-post="{% url 'chat:hx-doc-delete' pk=doc.id %}"
+                hx-target="#docs-panel"
+                hx-swap="outerHTML"
+                hx-confirm="Excluir &quot;{{ doc.title }}&quot;?"
+                onclick="event.stopPropagation()">
+          &#x2715;
+        </button>
+        {% else %}
+        <span class="text-secondary" style="font-size:.7rem; padding-top:.2rem;">…</span>
+        {% endif %}
+      </div>
+
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>

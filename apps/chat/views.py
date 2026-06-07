@@ -26,11 +26,14 @@ Controle de acesso:
 from __future__ import annotations
 
 import logging
+import os
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
+
+from apps.documents.models import UserDocument
 from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -271,3 +274,116 @@ def hx_conversation_rename(request, pk):
         "chat/partials/_sidebar_list.html",
         {"conversations": conversations, "active_id": active_id},
     )
+
+
+# ---------------------------------------------------------------------------
+# Views HTMX — Painel de Documentos Pessoais
+# ---------------------------------------------------------------------------
+
+_DOCS_ALLOWED_EXT = {"pdf", "docx", "txt", "md"}
+_DOCS_MAX_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
+def _docs_context(user):
+    docs = UserDocument.objects.filter(owner=user).order_by("-created_at")
+    has_processing = docs.filter(
+        status__in=[UserDocument.Status.PENDING, UserDocument.Status.INDEXING]
+    ).exists()
+    return {"documents": docs, "has_processing": has_processing}
+
+
+@login_required
+@require_GET
+def hx_documents_panel(request):
+    """HTMX: painel completo de documentos (form + lista)."""
+    return render(request, "chat/partials/_docs_panel.html", _docs_context(request.user))
+
+
+@login_required
+@require_GET
+def hx_documents_list(request):
+    """HTMX: apenas a lista de documentos (usada pelo polling automático)."""
+    return render(request, "chat/partials/_docs_list.html", _docs_context(request.user))
+
+
+@login_required
+@require_POST
+def hx_document_upload(request):
+    """HTMX: faz upload de documento e dispara indexação via Celery."""
+    file_obj = request.FILES.get("file")
+    title = request.POST.get("title", "").strip()
+    upload_error = None
+
+    if not file_obj:
+        upload_error = "Selecione um arquivo."
+    else:
+        ext = os.path.splitext(file_obj.name)[1].lstrip(".").lower()
+        if ext not in _DOCS_ALLOWED_EXT:
+            upload_error = (
+                f"Formato não suportado. Use: {', '.join(sorted(_DOCS_ALLOWED_EXT))}."
+            )
+        elif file_obj.size > _DOCS_MAX_SIZE:
+            upload_error = "Arquivo muito grande (máx. 50 MB)."
+
+    if not upload_error:
+        ext = os.path.splitext(file_obj.name)[1].lstrip(".").lower()
+        doc = UserDocument(
+            owner=request.user,
+            title=title or os.path.splitext(file_obj.name)[0],
+            file_type=ext,
+            status=UserDocument.Status.PENDING,
+        )
+        doc.file.save(file_obj.name, file_obj, save=False)
+        doc.save()
+        try:
+            doc.trigger_indexing()
+        except Exception:
+            logger.warning("Falha ao enfileirar indexação para doc %s", doc.id)
+
+    ctx = _docs_context(request.user)
+    if upload_error:
+        ctx["upload_error"] = upload_error
+    return render(request, "chat/partials/_docs_panel.html", ctx)
+
+
+@login_required
+@require_POST
+def hx_document_delete(request, pk):
+    """HTMX: remove documento via Celery e atualiza o painel (UI otimista)."""
+    doc = get_object_or_404(UserDocument, pk=pk, owner=request.user)
+
+    from apps.core.tasks import delete_document
+    try:
+        delete_document.delay(str(doc.id), "personal")
+    except Exception:
+        logger.warning("Falha ao enfileirar deleção para doc %s — removendo sincronamente", doc.id)
+        doc.chunks.all().delete()
+        if doc.file:
+            try:
+                doc.file.delete(save=False)
+            except Exception:
+                pass
+        doc.delete()
+
+    # Resposta otimista: omite o documento antes de o Celery processar
+    docs = UserDocument.objects.filter(owner=request.user).exclude(pk=pk).order_by("-created_at")
+    has_processing = docs.filter(
+        status__in=[UserDocument.Status.PENDING, UserDocument.Status.INDEXING]
+    ).exists()
+    return render(request, "chat/partials/_docs_panel.html", {
+        "documents": docs,
+        "has_processing": has_processing,
+    })
+
+
+@login_required
+@require_POST
+def hx_document_reindex(request, pk):
+    """HTMX: re-indexa documento e atualiza o painel."""
+    doc = get_object_or_404(UserDocument, pk=pk, owner=request.user)
+    if doc.status != UserDocument.Status.INDEXING:
+        try:
+            doc.trigger_reindex()
+        except Exception:
+            logger.warning("Falha ao enfileirar re-indexação para doc %s", doc.id)
+    return render(request, "chat/partials/_docs_panel.html", _docs_context(request.user))

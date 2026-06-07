@@ -73,6 +73,15 @@
 #messages-container::-webkit-scrollbar { width: 5px; }
 #messages-container::-webkit-scrollbar-thumb { background: #dee2e6; border-radius: 3px; }
 
+/* ---- Painel de documentos ---- */
+#docs-panel-collapse .collapse-inner { max-height: 320px; overflow-y: auto; }
+#docs-panel-collapse::-webkit-scrollbar { width: 4px; }
+#docs-panel-collapse::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 2px; }
+#docs-toggle-btn { background: transparent; border: none; border-radius: 0; }
+#docs-toggle-btn:hover { background: rgba(255,255,255,.06); }
+#docs-toggle-btn .arrow { transition: transform .2s; display: inline-block; }
+#docs-toggle-btn[aria-expanded="true"] .arrow { transform: rotate(180deg); }
+
 /* ---- Responsivo: sidebar colapsavel em telas pequenas ---- */
 @media (max-width: 768px) {
   .chat-sidebar {
@@ -100,6 +109,29 @@
               data-bs-toggle="modal" data-bs-target="#modal-new-conv">
         + Nova Conversa
       </button>
+    </div>
+
+    {# Painel de documentos pessoais (colapsavel) #}
+    <div style="border-bottom: 1px solid rgba(255,255,255,.12);">
+      <button id="docs-toggle-btn"
+              type="button"
+              class="btn btn-sm w-100 text-start px-3 py-2 text-white-50"
+              data-bs-toggle="collapse"
+              data-bs-target="#docs-panel-collapse"
+              aria-expanded="false"
+              aria-controls="docs-panel-collapse"
+              hx-get="{% url 'chat:hx-docs-panel' %}"
+              hx-target="#docs-panel-container"
+              hx-trigger="click once">
+        <span style="font-size:.8rem;">&#128196;</span>
+        <span class="small ms-1">Meus Documentos</span>
+        <span class="arrow float-end small text-secondary">&#9660;</span>
+      </button>
+      <div class="collapse" id="docs-panel-collapse">
+        <div class="collapse-inner" id="docs-panel-container">
+          <div class="text-center text-secondary small py-3">Carregando…</div>
+        </div>
+      </div>
     </div>
 
     {# Lista de conversas (HTMX) #}
@@ -472,6 +504,21 @@
     if (e.target.id === "sidebar-toggle") {
       var sb = document.getElementById("chat-sidebar");
       if (sb) sb.classList.toggle("sidebar-open");
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // Atualiza label do file input no painel de documentos
+  // ----------------------------------------------------------------
+  document.addEventListener("change", function (e) {
+    if (e.target.id === "docs-file-input") {
+      var label = document.getElementById("docs-file-label");
+      if (label) {
+        // O texto é o primeiro filho de texto do label (antes do input oculto)
+        label.firstChild.textContent = e.target.files[0]
+          ? e.target.files[0].name
+          : "Escolher arquivo…";
+      }
     }
   });
 
