@@ -98,6 +98,36 @@ def _get_embedding_model(model_name: str):
 
 
 # ---------------------------------------------------------------------------
+# Wrapper LangChain para o SemanticChunker (singleton)
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def get_langchain_embeddings():
+    """
+    Singleton de HuggingFaceEmbeddings (langchain-huggingface) usado pelo SemanticChunker.
+    Reutiliza o SentenceTransformer já carregado por _get_embedding_model, apontando
+    o atributo interno .client para o mesmo objeto — evita dois modelos em memória.
+    """
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings
+    except ImportError as exc:
+        raise EmbeddingError(
+            "langchain-huggingface não está instalado. "
+            "Execute: uv add langchain-huggingface",
+            original=exc,
+        ) from exc
+
+    model_name = getattr(settings, "EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    logger.info("Criando wrapper LangChain HuggingFaceEmbeddings para '%s'…", model_name)
+    hf = HuggingFaceEmbeddings(model_name=model_name, model_kwargs={"device": "cpu"})
+    # Aponta o client interno para o singleton já em memória.
+    hf.client = _get_embedding_model(model_name)
+    logger.info("HuggingFaceEmbeddings pronto (client reutilizado).")
+    return hf
+
+
+# ---------------------------------------------------------------------------
 # Geração de embedding
 # ---------------------------------------------------------------------------
 

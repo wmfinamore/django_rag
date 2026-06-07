@@ -177,7 +177,7 @@ def _get_engines():
     Levanta PrivacyFilterError se o Presidio não estiver instalado.
     """
     try:
-        from presidio_analyzer import AnalyzerEngine
+        from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
         from presidio_anonymizer import AnonymizerEngine
     except ImportError as exc:
         raise PrivacyFilterError(
@@ -188,17 +188,28 @@ def _get_engines():
 
     logger.info("Carregando Presidio AnalyzerEngine (spaCy pt_core_news_lg)…")
     try:
-        from presidio_analyzer.nlp_engine import NlpEngineProvider
+        from presidio_analyzer.nlp_engine import NerModelConfiguration, SpacyNlpEngine
 
-        # Configura explicitamente o modelo português para evitar que o
-        # Presidio carregue o default inglês (en_core_web_lg) e rejeite
-        # chamadas com language="pt".
-        nlp_configuration = {
-            "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "pt", "model_name": "pt_core_news_lg"}],
-        }
-        nlp_engine = NlpEngineProvider(nlp_configuration=nlp_configuration).create_engine()
-        analyzer = AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["pt"])
+        # SpacyNlpEngine com NerModelConfiguration suprime o warning "Entity MISC is not
+        # mapped to a Presidio entity" gerado pelo modelo pt_core_news_lg.
+        nlp_engine = SpacyNlpEngine(
+            models=[{"lang_code": "pt", "model_name": "pt_core_news_lg"}],
+            ner_model_configuration=NerModelConfiguration(labels_to_ignore=["MISC", "O"]),
+        )
+
+        # RecognizerRegistry explícito carrega apenas reconhecedores para 'pt',
+        # eliminando os ~18 warnings de recognizers de outros idiomas (en, es, it, pl).
+        registry = RecognizerRegistry()
+        registry.load_predefined_recognizers(languages=["pt"])
+        for recognizer in _build_br_recognizers():
+            registry.add_recognizer(recognizer)
+            logger.debug("Reconhecedor registrado: %s (pt)", recognizer.supported_entities)
+
+        analyzer = AnalyzerEngine(
+            nlp_engine=nlp_engine,
+            registry=registry,
+            supported_languages=["pt"],
+        )
     except Exception as exc:
         raise PrivacyFilterError(
             "Falha ao inicializar o AnalyzerEngine do Presidio. "
@@ -206,11 +217,6 @@ def _get_engines():
             "uv run python -m spacy download pt_core_news_lg",
             original=exc,
         ) from exc
-
-    # Registra reconhecedores brasileiros que o Presidio não inclui para 'pt'
-    for recognizer in _build_br_recognizers():
-        analyzer.registry.add_recognizer(recognizer)
-        logger.debug("Reconhecedor registrado: %s (pt)", recognizer.supported_entities)
 
     anonymizer = AnonymizerEngine()
     logger.info("Presidio pronto.")

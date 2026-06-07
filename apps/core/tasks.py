@@ -75,7 +75,6 @@ def _chunk_text(text: str) -> list[str]:
     ou se o SemanticChunker falhar.
     """
     breakpoint_type = getattr(settings, "RAG_SEMANTIC_BREAKPOINT", "percentile")
-    embedding_model_name = getattr(settings, "EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     chunk_size = getattr(settings, "RAG_CHUNK_SIZE", 500)
     chunk_overlap = getattr(settings, "RAG_CHUNK_OVERLAP", 50)
 
@@ -85,13 +84,11 @@ def _chunk_text(text: str) -> list[str]:
         return _chunk_text_fallback(text, chunk_size, chunk_overlap)
 
     try:
-        from langchain_community.embeddings import HuggingFaceEmbeddings
         from langchain_experimental.text_splitter import SemanticChunker
 
-        hf_embeddings = HuggingFaceEmbeddings(
-            model_name=embedding_model_name,
-            model_kwargs={"device": "cpu"},
-        )
+        from apps.core.rag_service import get_langchain_embeddings
+
+        hf_embeddings = get_langchain_embeddings()
         chunker = SemanticChunker(
             embeddings=hf_embeddings,
             breakpoint_threshold_type=breakpoint_type,
