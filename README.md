@@ -167,7 +167,7 @@ Acesse: http://localhost:8000
 
 A raiz `/` redireciona para `/rag/`. O login é feito via Keycloak em `/rag/oidc/authenticate/`.
 
-> **Warm-up automático:** na inicialização, o Django pré-carrega o modelo de embedding (SentenceTransformer), o reranker (CrossEncoder) e envia um keep-alive ao Ollama em background. A primeira query RAG não sofre atraso de cold start.
+> **Warm-up automático:** na inicialização, o Django pré-carrega o modelo de embedding (SentenceTransformer), o reranker (CrossEncoder) e envia um keep-alive ao Ollama em background. A primeira query RAG não sofre atraso de cold start. O worker Celery faz o mesmo no sinal `worker_process_init` — veja a seção **Rodar o Celery**.
 
 ---
 
@@ -180,6 +180,8 @@ uv run celery -A config worker -l info
 ```
 
 O Celery é necessário para indexação assíncrona de documentos (tasks `index_document`, `delete_document`, `reindex_document`).
+
+> **Warm-up automático no worker:** o sinal `worker_process_init` pré-carrega o modelo de embedding, o wrapper LangChain para o SemanticChunker e o Presidio+spaCy em cada processo worker na inicialização. A primeira task de indexação começa quente, sem os ~22 s de cold start.
 
 > **Windows:** o pool `prefork` padrão não é suportado. O `development.py` já configura `CELERY_WORKER_POOL = "solo"` automaticamente — nenhuma flag adicional é necessária.
 
@@ -343,6 +345,52 @@ Enquanto há documentos em `pending` ou `indexing`, a lista é atualizada automa
 | **✕** excluir | qualquer status exceto `indexing` | remove chunks e arquivo (assíncrono via Celery); UI atualizada imediatamente (otimista) |
 
 > O Celery worker deve estar ativo para que indexação, re-indexação e exclusão funcionem. Veja a seção **Rodar o Celery**.
+
+---
+
+## Pipeline de Indexação
+
+O pipeline executado pela task Celery `index_document` para cada documento:
+
+```
+arquivo → extração de texto → mascaramento PII → chunking semântico → embeddings → pgvector
+```
+
+| Etapa | Biblioteca | Detalhe |
+|---|---|---|
+| Extração de texto | pypdf · python-docx | Suporta PDF, DOCX, TXT, MD |
+| Mascaramento PII/LGPD | Presidio + spaCy `pt_core_news_lg` | Entidades: CPF, CNPJ, RG, e-mail, telefone, endereço, cartão, IBAN, nome |
+| Chunking semântico | `SemanticChunker` (langchain-experimental) | Fallback para `RecursiveCharacterTextSplitter` em textos curtos |
+| Embeddings | `SentenceTransformer` · `all-MiniLM-L6-v2` | Vetores de 384 dimensões, gerados em lote |
+| Armazenamento | pgvector (PostgreSQL) | Busca por distância L2 no momento da query RAG |
+
+### Modelos pré-carregados
+
+Para eliminar o cold start, todos os modelos são carregados uma única vez por processo:
+
+| Processo | O que é pré-carregado | Onde |
+|---|---|---|
+| Django (Daphne) | `SentenceTransformer`, `CrossEncoder` | `CoreConfig.ready()` |
+| Django (Daphne) | Ollama keep-alive | thread daemon em `CoreConfig.ready()` |
+| Worker Celery | `SentenceTransformer`, `HuggingFaceEmbeddings`, Presidio+spaCy | sinal `worker_process_init` |
+
+O wrapper `HuggingFaceEmbeddings` (langchain-huggingface) usado pelo `SemanticChunker` reutiliza o mesmo objeto `SentenceTransformer` já em memória — nenhum modelo duplicado.
+
+### Entidades PII detectadas
+
+| Entidade | Placeholder | Exemplo |
+|---|---|---|
+| `BR_CPF` | `[CPF]` | 123.456.789-00 |
+| `BR_CNPJ` | `[CNPJ]` | 12.345.678/0001-99 |
+| `BR_RG` | `[RG]` | 1.234.567-8 |
+| `EMAIL_ADDRESS` | `[EMAIL]` | usuario@exemplo.com |
+| `PHONE_NUMBER` | `[TELEFONE]` | (11) 99999-9999 |
+| `LOCATION` | `[ENDERECO]` | Rua das Flores, 100 |
+| `CREDIT_CARD` | `[CARTAO]` | 4111 1111 1111 1111 |
+| `IBAN_CODE` | `[CONTA_BANCARIA]` | — |
+| `PERSON` | `[PESSOA]` | João Silva |
+
+O score mínimo de confiança é controlado por `PRIVACY_MIN_SCORE` (padrão `0.7`).
 
 ---
 
