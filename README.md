@@ -202,7 +202,13 @@ O Celery é necessário para indexação assíncrona de documentos (tasks `index
 | `/rag/api/documents/` | API REST — documentos pessoais do usuário (lista / upload) |
 | `/rag/api/documents/<id>/` | API REST — detalhe / deleção de documento pessoal |
 | `/rag/api/documents/<id>/reindex/` | API REST — re-indexação de documento pessoal |
-| `/rag/chat/` | Interface de chat com RAG (WebSocket) |
+| `/rag/chat/` | Interface de chat com RAG (WebSocket + HTMX) |
+| `/rag/chat/hx/conversations/` | HTMX — lista de conversas (sidebar) |
+| `/rag/chat/hx/conversations/new/` | HTMX — criar conversa |
+| `/rag/chat/hx/documents/` | HTMX — painel de documentos pessoais |
+| `/rag/chat/hx/documents/upload/` | HTMX — upload de documento |
+| `/rag/chat/hx/documents/<id>/delete/` | HTMX — excluir documento |
+| `/rag/chat/hx/documents/<id>/reindex/` | HTMX — re-indexar documento |
 | `/rag/__debug__/` | Django Debug Toolbar (só com DEBUG=True) |
 
 ---
@@ -291,6 +297,52 @@ POST /rag/api/documents/<uuid>/reindex/
 | Acesso aos documentos | Apenas os próprios documentos (`owner = request.user`) |
 
 Superusuários **não** têm visibilidade especial — enxergam somente seus próprios documentos. Requisições anônimas recebem **403**.
+
+---
+
+## Chat
+
+A interface de chat está em `/rag/chat/` e combina WebSocket (streaming de tokens) com HTMX (navegação sem reload).
+
+### Conversas
+
+- **Criar:** botão "+ Nova Conversa" abre um modal para definir título (opcional), coleções de conhecimento e se documentos pessoais devem ser incluídos na busca RAG.
+- **Navegar:** clique na conversa na sidebar carrega o histórico e abre a conexão WebSocket.
+- **Renomear / excluir:** menu dropdown no cabeçalho da conversa.
+- **Streaming:** as respostas do LLM chegam token a token via WebSocket; o markdown é renderizado em tempo real com marked.js.
+
+### Painel de Documentos Pessoais
+
+Acessível pela seção colapsável **"Meus Documentos"** na sidebar, sem sair do chat.
+
+#### Upload
+
+1. Clique em "Meus Documentos" para expandir o painel (carregamento lazy).
+2. Preencha o título (opcional — usa o nome do arquivo como fallback).
+3. Selecione o arquivo (PDF, DOCX, TXT ou MD · máx. 50 MB).
+4. Clique em **↑ Enviar** — o documento é salvo e a indexação é disparada via Celery.
+
+#### Lista de documentos
+
+Cada documento exibe o título e um badge de status:
+
+| Status | Badge | Significado |
+|---|---|---|
+| `pending` | cinza | aguardando Celery |
+| `indexing` | amarelo + spinner | sendo processado |
+| `ready` | verde | indexado — inclui contagem de chunks |
+| `error` | vermelho | falha na indexação (tooltip com detalhes) |
+
+Enquanto há documentos em `pending` ou `indexing`, a lista é atualizada automaticamente a cada **4 segundos** via polling HTMX. O polling para automaticamente quando todos os documentos chegam a um estado final.
+
+#### Ações por documento
+
+| Botão | Disponível quando | Ação |
+|---|---|---|
+| **↻** re-indexar | `ready`, `error` ou `pending` | dispara nova indexação via Celery |
+| **✕** excluir | qualquer status exceto `indexing` | remove chunks e arquivo (assíncrono via Celery); UI atualizada imediatamente (otimista) |
+
+> O Celery worker deve estar ativo para que indexação, re-indexação e exclusão funcionem. Veja a seção **Rodar o Celery**.
 
 ---
 
