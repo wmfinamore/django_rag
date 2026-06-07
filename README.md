@@ -27,13 +27,13 @@ git clone <url-do-repositorio>
 cd django_rag
 ```
 
-### 2. Baixar o bootstrap estático
+### 2. Baixar os assets de frontend
 
 ```bash
-python docker/download_bootstrap.py
+python docker/download_frontend_deps.py
 ```
 
-Esse script baixa os arquivos CSS/JS do Bootstrap para `static/`.
+Esse script baixa Bootstrap, HTMX e marked.js para `staticfiles/` (diretório apontado por `STATICFILES_DIRS`). Os arquivos de vendor não são versionados no repositório.
 
 ### 3. Criar o arquivo `.env`
 
@@ -157,13 +157,17 @@ uv run python manage.py createsuperuser
 
 ### 11. Iniciar o servidor Django
 
+O projeto usa **Daphne** (ASGI) para suportar WebSockets no chat. Em modo `DEBUG`, os arquivos estáticos são servidos automaticamente pelo `ASGIStaticFilesHandler`, sem necessidade de servidor web adicional.
+
 ```bash
-uv run python manage.py runserver
+uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
 ```
 
 Acesse: http://localhost:8000
 
 A raiz `/` redireciona para `/rag/`. O login é feito via Keycloak em `/rag/oidc/authenticate/`.
+
+> **Warm-up automático:** na inicialização, o Django pré-carrega o modelo de embedding (SentenceTransformer), o reranker (CrossEncoder) e envia um keep-alive ao Ollama em background. A primeira query RAG não sofre atraso de cold start.
 
 ---
 
@@ -198,6 +202,7 @@ O Celery é necessário para indexação assíncrona de documentos (tasks `index
 | `/rag/api/documents/` | API REST — documentos pessoais do usuário (lista / upload) |
 | `/rag/api/documents/<id>/` | API REST — detalhe / deleção de documento pessoal |
 | `/rag/api/documents/<id>/reindex/` | API REST — re-indexação de documento pessoal |
+| `/rag/chat/` | Interface de chat com RAG (WebSocket) |
 | `/rag/__debug__/` | Django Debug Toolbar (só com DEBUG=True) |
 
 ---
@@ -346,6 +351,8 @@ Variáveis que mais frequentemente precisam ser ajustadas:
 | `OIDC_RP_CLIENT_SECRET` | — | Sempre (gerado pelo keycloak_setup.py) |
 | `OLLAMA_NUM_THREAD` | 4 | Ajustar ao número de CPUs da máquina |
 | `OLLAMA_LLM_MODEL` | `llama3.2:3b` | Para usar outro modelo Ollama |
+| `OLLAMA_KEEP_ALIVE` | `-1` | Tempo que o Ollama mantém o modelo na memória; `-1` = indefinido, ou ex.: `"30m"`, `"1h"` |
+| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Modelo sentence-transformers para geração de embeddings |
 | `RAG_TOP_K` | 4 | Para alterar o número de chunks no prompt |
 | `PRIVACY_MIN_SCORE` | 0.7 | Para ajustar sensibilidade do filtro PII |
 
@@ -359,7 +366,7 @@ Variáveis que mais frequentemente precisam ser ajustadas:
 | `apps.accounts` | ✅ habilitado | CustomUser, OIDC backend, grupos |
 | `apps.knowledge` | ✅ habilitado | Coleções, documentos institucionais, ingestão, API REST, 156 testes |
 | `apps.documents` | ✅ habilitado | Documentos pessoais do usuário, API REST, 59 testes |
-| `apps.chat` | 🔜 planejado | Conversas, WebSocket streaming |
+| `apps.chat` | ✅ habilitado | Conversas, WebSocket streaming com RAG, UI HTMX |
 
 ---
 
