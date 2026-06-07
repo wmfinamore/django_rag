@@ -257,6 +257,8 @@ OLLAMA_LLM_MODEL = env("OLLAMA_LLM_MODEL", default="llama3.2:3b")
 OLLAMA_NUM_CTX = env.int("OLLAMA_NUM_CTX", default=2048)
 OLLAMA_NUM_THREAD = env.int("OLLAMA_NUM_THREAD", default=4)
 OLLAMA_TEMPERATURE = env.float("OLLAMA_TEMPERATURE", default=0.3)
+# -1 mantém o modelo carregado indefinidamente; aceita strings tipo "30m", "1h"
+OLLAMA_KEEP_ALIVE = env("OLLAMA_KEEP_ALIVE", default="-1")
 
 # ---------------------------------------------------------------------------
 # Embeddings

@@ -1,4 +1,7 @@
+import json
 import logging
+import threading
+import urllib.request
 
 from django.apps import AppConfig
 
@@ -23,3 +26,43 @@ class CoreConfig(AppConfig):
             _get_cross_encoder(settings.RAG_RERANKER_MODEL)
         except Exception:
             logger.exception("Falha ao pré-carregar o CrossEncoder.")
+
+        threading.Thread(target=_warmup_ollama, daemon=True).start()
+
+
+def _warmup_ollama():
+    """
+    Envia uma requisição keep-alive ao Ollama para manter o modelo carregado
+    na memória e eliminar o cold start na primeira query do usuário.
+    Executado em background para não bloquear a inicialização do servidor.
+    """
+    from django.conf import settings
+
+    base_url = getattr(settings, "OLLAMA_BASE_URL", "http://localhost:11434")
+    model = getattr(settings, "OLLAMA_LLM_MODEL", "llama3.2:3b")
+    keep_alive = getattr(settings, "OLLAMA_KEEP_ALIVE", "-1")
+
+    payload = json.dumps({
+        "model": model,
+        "keep_alive": keep_alive,
+        "stream": False,
+    }).encode()
+
+    req = urllib.request.Request(
+        f"{base_url}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=60):
+            logger.info(
+                "Ollama warm-up concluído: modelo '%s' mantido na memória (keep_alive=%s).",
+                model,
+                keep_alive,
+            )
+    except Exception:
+        logger.warning(
+            "Ollama warm-up falhou — servidor pode estar indisponível.",
+            exc_info=True,
+        )
