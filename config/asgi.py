@@ -13,11 +13,18 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.development')
 
 django.setup()
 
+from django.conf import settings  # noqa: E402
+
 from apps.chat.routing import websocket_urlpatterns  # noqa: E402
+
+http_handler = get_asgi_application()
+if settings.DEBUG:
+    from django.contrib.staticfiles.handlers import ASGIStaticFilesHandler  # noqa: E402
+    http_handler = ASGIStaticFilesHandler(http_handler)
 
 application = ProtocolTypeRouter(
     {
-        "http": get_asgi_application(),
+        "http": http_handler,
         "websocket": AuthMiddlewareStack(
             URLRouter(websocket_urlpatterns)
         ),
