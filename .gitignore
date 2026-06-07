@@ -203,5 +203,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-static/css/bootstrap*
-static/js/bootstrap*
+staticfiles/css/bootstrap*
+staticfiles/js/bootstrap*
+staticfiles/js/htmx*
+staticfiles/js/marked*
