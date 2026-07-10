@@ -514,8 +514,8 @@ class TestRAGServiceBuildContext(TestCase):
 
         with patch("apps.core.rag_service._get_embedding_model", return_value=mock_model):
             with patch(
-                "apps.core.rag_service.rerank",
-                return_value=["Funcionarios tem 30 dias de ferias."],
+                "apps.core.rag_service.rerank_with_scores",
+                return_value=[(5.0, "Funcionarios tem 30 dias de ferias.")],
             ) as mock_rerank:
                 from apps.core.rag_service import RAGService
                 service = self._make_service(collection_ids=["col-1"])

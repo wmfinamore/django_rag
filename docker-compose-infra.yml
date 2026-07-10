@@ -19,7 +19,7 @@ services:
       POSTGRES_PASSWORD: postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - postgres_init:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "15432:5432"
     healthcheck:
@@ -101,5 +101,3 @@ volumes:
     driver: local
   redis_data:
     driver: local
-  postgres_init:
-    driver: loca

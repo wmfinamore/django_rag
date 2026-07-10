@@ -60,3 +60,31 @@ class CustomUser(AbstractUser):
 
     def __str__(self) -> str:
         return self.get_full_name() or self.username
+
+    # ------------------------------------------------------------------ #
+    # Sincronização de senha Django → Keycloak                           #
+    # ------------------------------------------------------------------ #
+
+    def set_password(self, raw_password) -> None:
+        """
+        Além do comportamento padrão, guarda a senha em claro em um
+        atributo transiente para que save() a replique no Keycloak.
+        Cobre admin, manage.py changepassword e formulários — todos
+        passam por set_password() + save().
+        """
+        super().set_password(raw_password)
+        if raw_password is not None:
+            self._kc_password_to_sync = raw_password
+
+    def save(self, *args, **kwargs) -> None:
+        super().save(*args, **kwargs)
+
+        raw = getattr(self, "_kc_password_to_sync", None)
+        if raw is not None:
+            self._kc_password_to_sync = None
+            from django.db import transaction
+
+            from apps.accounts.keycloak_sync import sync_password_to_keycloak
+
+            # on_commit: só sincroniza se a senha foi de fato persistida.
+            transaction.on_commit(lambda: sync_password_to_keycloak(self, raw))

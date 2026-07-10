@@ -168,6 +168,18 @@ LOGOUT_REDIRECT_URL = "/rag/"
 LOGIN_URL = "/rag/oidc/authenticate/"
 
 # ---------------------------------------------------------------------------
+# Keycloak Admin API — sincronização de senha Django → Keycloak
+# ---------------------------------------------------------------------------
+
+KEYCLOAK_BASE_URL = env("KEYCLOAK_BASE_URL", default="http://localhost:8081")
+KEYCLOAK_REALM = env("KEYCLOAK_REALM", default="django-rag")
+KEYCLOAK_ADMIN_USER = env("KEYCLOAK_ADMIN_USER", default="admin")
+KEYCLOAK_ADMIN_PASSWORD = env("KEYCLOAK_ADMIN_PASSWORD", default="admin")
+# Replica trocas de senha feitas no Django para o Keycloak (Admin API).
+# O caminho inverso não existe: o Keycloak nunca expõe senhas/hashes.
+KEYCLOAK_PASSWORD_SYNC = env.bool("KEYCLOAK_PASSWORD_SYNC", default=True)
+
+# ---------------------------------------------------------------------------
 # Cache — Redis
 # ---------------------------------------------------------------------------
 
@@ -272,6 +284,17 @@ EMBEDDING_MODEL = env("EMBEDDING_MODEL", default="all-MiniLM-L6-v2")
 
 RAG_TOP_K = env.int("RAG_TOP_K", default=4)
 RAG_RERANK_FACTOR = env.int("RAG_RERANK_FACTOR", default=3)
+
+# Distância L2 máxima aceita na busca pgvector (0 desabilita o filtro).
+# Para all-MiniLM-L6-v2, valores típicos: ~0.8 (muito similar) a ~1.4
+# (não relacionado). 1.3 é um corte fraco, só elimina ruído óbvio.
+RAG_MAX_DISTANCE = env.float("RAG_MAX_DISTANCE", default=1.3)
+
+# Score mínimo do CrossEncoder (logit) para um chunk entrar no prompt.
+# ms-marco-MiniLM-L-6-v2 produz logits ~[-11, +11]; 0.0 ≈ "relevante".
+# Torna o nº de chunks no prompt adaptativo (1..RAG_TOP_K) em vez de fixo.
+RAG_MIN_RERANK_SCORE = env.float("RAG_MIN_RERANK_SCORE", default=0.0)
+
 RAG_RERANKER_MODEL = env(
     "RAG_RERANKER_MODEL",
     default="cross-encoder/ms-marco-MiniLM-L-6-v2",

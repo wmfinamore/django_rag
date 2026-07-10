@@ -350,7 +350,13 @@ def hx_document_upload(request):
 @require_POST
 def hx_document_delete(request, pk):
     """HTMX: remove documento via Celery e atualiza o painel (UI otimista)."""
-    doc = get_object_or_404(UserDocument, pk=pk, owner=request.user)
+    doc = UserDocument.objects.filter(pk=pk, owner=request.user).first()
+    if doc is None:
+        # Documento já removido (ou de outro usuário): painel estava
+        # desatualizado — apenas re-renderiza com o estado atual.
+        return render(
+            request, "chat/partials/_docs_panel.html", _docs_context(request.user)
+        )
 
     from apps.core.tasks import delete_document
     try:
@@ -380,7 +386,13 @@ def hx_document_delete(request, pk):
 @require_POST
 def hx_document_reindex(request, pk):
     """HTMX: re-indexa documento e atualiza o painel."""
-    doc = get_object_or_404(UserDocument, pk=pk, owner=request.user)
+    doc = UserDocument.objects.filter(pk=pk, owner=request.user).first()
+    if doc is None:
+        # Documento não existe mais (ou é de outro usuário): re-renderiza
+        # o painel em vez de devolver 404 e deixar a UI presa no estado velho.
+        return render(
+            request, "chat/partials/_docs_panel.html", _docs_context(request.user)
+        )
     if doc.status != UserDocument.Status.INDEXING:
         try:
             doc.trigger_reindex()

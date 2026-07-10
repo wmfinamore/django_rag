@@ -42,6 +42,12 @@ def _warmup_ollama():
     model = getattr(settings, "OLLAMA_LLM_MODEL", "llama3.2:3b")
     keep_alive = getattr(settings, "OLLAMA_KEEP_ALIVE", "-1")
 
+    # Ollama aceita keep_alive como número (segundos; -1 = indefinido) ou
+    # string de duração com unidade ("30m", "1h"). String numérica sem
+    # unidade ("-1") falha no parse e gera HTTP 400 — converte para int.
+    if isinstance(keep_alive, str) and keep_alive.lstrip("-").isdigit():
+        keep_alive = int(keep_alive)
+
     payload = json.dumps({
         "model": model,
         "keep_alive": keep_alive,

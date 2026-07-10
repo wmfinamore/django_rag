@@ -107,12 +107,18 @@ def _chunk_text(text: str) -> list[str]:
 def _chunk_text_fallback(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     """Fallback de chunking com RecursiveCharacterTextSplitter."""
     try:
-        from langchain.text_splitter import RecursiveCharacterTextSplitter
-    except ImportError as exc:
-        raise ChunkingError(
-            "langchain não está instalado. Execute: uv add langchain",
-            original=exc,
-        ) from exc
+        # langchain >= 1.x: pacote dedicado langchain-text-splitters.
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+    except ImportError:
+        try:
+            # langchain < 1.x: caminho legado.
+            from langchain.text_splitter import RecursiveCharacterTextSplitter
+        except ImportError as exc:
+            raise ChunkingError(
+                "langchain-text-splitters não está instalado. "
+                "Execute: uv add langchain-text-splitters",
+                original=exc,
+            ) from exc
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,

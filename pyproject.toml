@@ -52,10 +52,17 @@ dependencies = [
     "pyarrow>=18.0,<19.0",
     "torch>=2.11.0",
     "langchain-huggingface>=1.2.2",
+    "pt-core-news-lg",
 ]
 
 [[tool.uv.index]]
+name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+pt-core-news-lg = { url = "https://github.com/explosion/spacy-models/releases/download/pt_core_news_lg-3.8.0/pt_core_news_lg-3.8.0-py3-none-any.whl" }
 
 [project.optional-dependencies]
 dev = [

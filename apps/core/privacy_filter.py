@@ -199,7 +199,7 @@ def _get_engines():
 
         # RecognizerRegistry explícito carrega apenas reconhecedores para 'pt',
         # eliminando os ~18 warnings de recognizers de outros idiomas (en, es, it, pl).
-        registry = RecognizerRegistry()
+        registry = RecognizerRegistry(supported_languages=["pt"])
         registry.load_predefined_recognizers(languages=["pt"])
         for recognizer in _build_br_recognizers():
             registry.add_recognizer(recognizer)

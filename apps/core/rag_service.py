@@ -31,9 +31,10 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, AsyncIterator, Iterator
 
 from django.conf import settings
+from pgvector.django import L2Distance
 
 from apps.core.exceptions import EmbeddingError, LLMError, RAGError
-from apps.core.reranker import rerank
+from apps.core.reranker import rerank_with_scores
 
 if TYPE_CHECKING:
     from apps.accounts.models import CustomUser
@@ -121,8 +122,14 @@ def get_langchain_embeddings():
     model_name = getattr(settings, "EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     logger.info("Criando wrapper LangChain HuggingFaceEmbeddings para '%s'…", model_name)
     hf = HuggingFaceEmbeddings(model_name=model_name, model_kwargs={"device": "cpu"})
-    # Aponta o client interno para o singleton já em memória.
-    hf.client = _get_embedding_model(model_name)
+    # Aponta o client interno para o singleton já em memória (a cópia criada
+    # pelo __init__ do wrapper é descartada pelo GC). O nome do atributo mudou
+    # entre versões: 'client' (< 1.x) → '_client' (>= 1.x, privado pydantic).
+    singleton = _get_embedding_model(model_name)
+    try:
+        hf.client = singleton
+    except (ValueError, AttributeError):
+        hf._client = singleton
     logger.info("HuggingFaceEmbeddings pronto (client reutilizado).")
     return hf
 
@@ -239,11 +246,19 @@ class RAGService:
     use_personal_docs:
         Se True, inclui UserChunk do usuário na busca.
     top_k:
-        Chunks finais enviados ao prompt (pós-reranking).
+        Máximo de chunks finais enviados ao prompt (pós-reranking).
         Padrão: ``settings.RAG_TOP_K``.
     rerank_factor:
         Multiplicador de candidatos pré-reranking.
         Padrão: ``settings.RAG_RERANK_FACTOR``.
+    max_distance:
+        Distância L2 máxima para aceitar um candidato do pgvector.
+        Candidatos mais distantes são descartados (0 desabilita o filtro).
+        Padrão: ``settings.RAG_MAX_DISTANCE``.
+    min_rerank_score:
+        Score mínimo do CrossEncoder para um chunk entrar no prompt.
+        Torna o nº de chunks adaptativo à relevância, em vez de sempre top_k.
+        Padrão: ``settings.RAG_MIN_RERANK_SCORE``.
     """
 
     def __init__(
@@ -253,6 +268,8 @@ class RAGService:
         use_personal_docs: bool = False,
         top_k: int | None = None,
         rerank_factor: int | None = None,
+        max_distance: float | None = None,
+        min_rerank_score: float | None = None,
     ):
         self.user = user
         self.collection_ids = collection_ids or []
@@ -260,6 +277,12 @@ class RAGService:
         self.top_k = top_k if top_k is not None else getattr(settings, "RAG_TOP_K", 4)
         self.rerank_factor = rerank_factor if rerank_factor is not None else getattr(
             settings, "RAG_RERANK_FACTOR", 3
+        )
+        self.max_distance = max_distance if max_distance is not None else getattr(
+            settings, "RAG_MAX_DISTANCE", 0.0
+        )
+        self.min_rerank_score = min_rerank_score if min_rerank_score is not None else getattr(
+            settings, "RAG_MIN_RERANK_SCORE", 0.0
         )
 
     # ------------------------------------------------------------------
@@ -270,7 +293,13 @@ class RAGService:
         """
         Busca chunks candidatos no pgvector.
 
-        Retorna lista de dicts com 'content', 'source_title', 'source_id'.
+        A cada chamada a busca é refeita com o embedding da query atual —
+        nada é cacheado entre pesquisas. O nº de candidatos é limitado por
+        ``top_k × rerank_factor`` por fonte e, se ``max_distance`` > 0,
+        candidatos distantes demais são descartados ainda no SQL.
+
+        Retorna lista de dicts com 'content', 'source_title', 'source_id',
+        'source_type' e 'distance'.
         """
         candidates: list[dict] = []
         candidate_limit = self.top_k * self.rerank_factor
@@ -284,17 +313,20 @@ class RAGService:
                     KnowledgeChunk.objects.filter(
                         collection_id__in=self.collection_ids
                     )
-                    .order_by(
-                        KnowledgeChunk.embedding.l2_distance(query_embedding)
-                    )[:candidate_limit]
+                    .select_related("document")
+                    .annotate(distance=L2Distance("embedding", query_embedding))
+                    .order_by("distance")
                 )
-                for chunk in ks:
+                if self.max_distance > 0:
+                    ks = ks.filter(distance__lte=self.max_distance)
+                for chunk in ks[:candidate_limit]:
                     candidates.append(
                         {
                             "content": chunk.content,
                             "source_title": chunk.document.title,
                             "source_id": str(chunk.document.id),
                             "source_type": "knowledge",
+                            "distance": float(chunk.distance),
                         }
                     )
             except Exception as exc:
@@ -307,23 +339,34 @@ class RAGService:
 
                 us = (
                     UserChunk.objects.filter(user_id=self.user.pk)
-                    .order_by(
-                        UserChunk.embedding.l2_distance(query_embedding)
-                    )[:candidate_limit]
+                    .select_related("document")
+                    .annotate(distance=L2Distance("embedding", query_embedding))
+                    .order_by("distance")
                 )
-                for chunk in us:
+                if self.max_distance > 0:
+                    us = us.filter(distance__lte=self.max_distance)
+                for chunk in us[:candidate_limit]:
                     candidates.append(
                         {
                             "content": chunk.content,
                             "source_title": chunk.document.title,
                             "source_id": str(chunk.document.id),
                             "source_type": "personal",
+                            "distance": float(chunk.distance),
                         }
                     )
             except Exception as exc:
                 logger.warning("Falha ao buscar UserChunk: %s", exc)
 
-        return candidates
+        # Dedup por conteúdo (mantém o de menor distância — listas já ordenadas)
+        seen: set[str] = set()
+        unique: list[dict] = []
+        for c in sorted(candidates, key=lambda c: c.get("distance", 0.0)):
+            if c["content"] not in seen:
+                seen.add(c["content"])
+                unique.append(c)
+
+        return unique
 
     # ------------------------------------------------------------------
     # Prompt
@@ -356,18 +399,36 @@ class RAGService:
             )
             return RAGContext(chunks=[], sources=[], prompt=prompt)
 
-        # 3. Reranking
+        # 3. Reranking com scores — o nº final de chunks é adaptativo:
+        #    limitado por top_k, mas cortado por min_rerank_score.
         chunk_texts = [c["content"] for c in candidates]
-        top_texts = rerank(query=query, chunks=chunk_texts, top_k=self.top_k)
+        ranked = rerank_with_scores(query=query, chunks=chunk_texts, top_k=self.top_k)
+
+        selected = [(s, t) for s, t in ranked if s >= self.min_rerank_score]
+        if not selected and ranked:
+            # Nenhum candidato passou no corte: mantém o melhor para o LLM
+            # poder responder (ou dizer que não há informação suficiente).
+            selected = ranked[:1]
+
+        logger.debug(
+            "RAG: %d candidatos → %d selecionados (scores: %s)",
+            len(candidates),
+            len(selected),
+            [round(s, 4) for s, _ in selected],
+        )
 
         # Mapeia os chunks rerankeados de volta às suas fontes
+        # (candidates já deduplicados por conteúdo em _retrieve_candidates)
         content_to_candidate = {c["content"]: c for c in candidates}
-        top_candidates = [content_to_candidate.get(t, {"content": t}) for t in top_texts]
+        top_candidates = [
+            (score, content_to_candidate.get(text, {"content": text}))
+            for score, text in selected
+        ]
 
         # 4. Contexto e sources
         context_parts = [
             f"[{i + 1}] {c['content']}"
-            for i, c in enumerate(top_candidates)
+            for i, (_, c) in enumerate(top_candidates)
         ]
         context_str = "\n\n".join(context_parts)
 
@@ -377,13 +438,17 @@ class RAGService:
                 "id": c.get("source_id", ""),
                 "type": c.get("source_type", ""),
                 "index": i + 1,
+                "score": round(score, 4),
+                "distance": c.get("distance"),
             }
-            for i, c in enumerate(top_candidates)
+            for i, (score, c) in enumerate(top_candidates)
         ]
 
         prompt = CONTEXT_TEMPLATE.format(context=context_str, question=query)
 
-        return RAGContext(chunks=top_texts, sources=sources, prompt=prompt)
+        return RAGContext(
+            chunks=[text for _, text in selected], sources=sources, prompt=prompt
+        )
 
     # ------------------------------------------------------------------
     # LLM — geração síncrona e em streaming
@@ -405,6 +470,10 @@ class RAGService:
         num_ctx = getattr(settings, "OLLAMA_NUM_CTX", 2048)
         num_thread = getattr(settings, "OLLAMA_NUM_THREAD", 4)
         temperature = getattr(settings, "OLLAMA_TEMPERATURE", 0.3)
+        keep_alive = getattr(settings, "OLLAMA_KEEP_ALIVE", "-1")
+        # String numérica sem unidade ("-1") falha no parse de duração do Ollama.
+        if isinstance(keep_alive, str) and keep_alive.lstrip("-").isdigit():
+            keep_alive = int(keep_alive)
 
         return OllamaLLM(
             base_url=base_url,
@@ -412,6 +481,7 @@ class RAGService:
             temperature=temperature,
             num_ctx=num_ctx,
             num_thread=num_thread,
+            keep_alive=keep_alive,
         )
 
     def generate(self, query: str) -> tuple[str, list[dict]]:
@@ -474,3 +544,4 @@ class RAGService:
         """
         ctx = self.build_context(query)
         return ctx.sources
+
